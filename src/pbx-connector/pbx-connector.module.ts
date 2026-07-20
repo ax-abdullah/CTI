@@ -1,8 +1,10 @@
 import { Module } from '@nestjs/common';
-import { AmiConnectionService } from './ami-connection.service';
+import { TenantsModule } from '../tenants/tenants.module';
+import { PbxSupervisorService } from './pbx-supervisor.service';
 
 @Module({
-  providers: [AmiConnectionService],
-  exports: [AmiConnectionService],
+  imports: [TenantsModule],
+  providers: [PbxSupervisorService],
+  exports: [PbxSupervisorService],
 })
 export class PbxConnectorModule {}

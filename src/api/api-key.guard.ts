@@ -1,22 +1,21 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { timingSafeEqual } from 'node:crypto';
+import { TenantRegistryService } from '../tenants/tenant-registry.service';
 
+/**
+ * Resolves the calling tenant from X-API-Key (sha256 lookup in the
+ * registry) and attaches it to the request. Every /v1 handler downstream
+ * is therefore tenant-scoped by construction.
+ */
 @Injectable()
-export class ApiKeyGuard implements CanActivate {
-  constructor(private readonly config: ConfigService) {}
+export class TenantApiKeyGuard implements CanActivate {
+  constructor(private readonly registry: TenantRegistryService) {}
 
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest();
     const provided = request.headers['x-api-key'];
-    const expected = this.config.getOrThrow<string>('API_KEY');
-    if (
-      typeof provided !== 'string' ||
-      provided.length !== expected.length ||
-      !timingSafeEqual(Buffer.from(provided), Buffer.from(expected))
-    ) {
-      throw new UnauthorizedException('Invalid API key');
-    }
+    const tenant = typeof provided === 'string' ? this.registry.tenantByApiKey(provided) : undefined;
+    if (!tenant) throw new UnauthorizedException('Invalid API key');
+    request.tenant = tenant;
     return true;
   }
 }

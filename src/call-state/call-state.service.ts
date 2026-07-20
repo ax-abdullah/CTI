@@ -1,27 +1,26 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { AmiMessage } from '../pbx-connector/ami-client';
-import {
-  CALL_EVENTS,
-  CallDirection,
-  CallEndedEvent,
-} from './normalized-events';
+import { TenantRegistryService, ResolvedTenant } from '../tenants/tenant-registry.service';
+import { CALL_EVENTS, CallDirection, CallEndedEvent } from './normalized-events';
 
 interface TrackedChannel {
   uniqueid: string;
   name: string;
   callerIdNum?: string;
+  context?: string;
   isLocal: boolean;
-  endpoint?: string; // "1001" from "PJSIP/1001-0000002a" or "Local/1001@ctx-..."
+  endpoint?: string;
   hungUp: boolean;
 }
 
 interface CallRecord {
+  key: string; // `${connectionId}:${linkedid}`
   callId: string; // Linkedid
-  tenantId: string;
+  connectionId: string;
+  tenant?: ResolvedTenant;
   channels: Map<string, TrackedChannel>;
-  direction: CallDirection;
+  direction?: CallDirection;
   agentExt?: string;
   remoteNumber?: string;
   remoteName?: string;
@@ -36,65 +35,60 @@ interface CallRecord {
 }
 
 /**
- * Correlates the channel-centric AMI event stream into call-centric state,
- * keyed by Linkedid, and emits the normalized call.* vocabulary.
+ * Correlates channel-centric AMI events into call-centric state, keyed by
+ * (connectionId, Linkedid), and emits the normalized call.* vocabulary.
  *
- * Correlation rules (see cti-architecture.md §3):
- * - Linkedid groups all legs of one call; it is our callId.
- * - Local/ channels are tracked for lifecycle but never preferred for party
- *   resolution (FreePBX uses them heavily for follow-me/queues).
- * - answered := DialEnd(ANSWER) | BridgeEnter | first Newstate Up.
- * - ended := all tracked legs hung up, finalized after a short grace period
- *   so late Cdr/Hangup stragglers are absorbed.
- *
- * Phase 1 keeps state in-memory; Phase 2 moves it to Redis with TTL so a
- * restart doesn't leak in-flight calls (plus CoreShowChannels resync).
+ * Tenant routing (shared-PBX case): a connection may host several tenants
+ * partitioned by dialplan context and extension range. Each call is
+ * assigned to a tenant via TenantRegistryService.resolveTenantForCall using
+ * channel contexts and endpoints as hints; events are held back until the
+ * owning tenant is known, and calls that match no tenant are dropped at
+ * finalize (never delivered cross-tenant).
  */
 @Injectable()
 export class CallStateService {
   private readonly logger = new Logger(CallStateService.name);
   private readonly calls = new Map<string, CallRecord>();
-  private readonly extensionPattern: RegExp;
   private readonly finalizeGraceMs = 1_500;
 
   constructor(
-    private readonly config: ConfigService,
+    private readonly registry: TenantRegistryService,
     private readonly bus: EventEmitter2,
-  ) {
-    this.extensionPattern = new RegExp(this.config.get('EXTENSION_PATTERN', '^\\d{3,5}$'));
-  }
+  ) {}
 
-  /** Snapshot of in-flight calls, for GET /v1/calls and debugging. */
-  activeCalls() {
-    return [...this.calls.values()].map((c) => ({
-      callId: c.callId,
-      direction: c.direction,
-      agentExt: c.agentExt,
-      remoteNumber: c.remoteNumber,
-      state: c.answeredEmitted ? 'answered' : 'ringing',
-      startedAt: c.startedAt.toISOString(),
-      channels: [...c.channels.values()].map((ch) => ch.name),
-    }));
+  activeCalls(tenantSlug?: string) {
+    return [...this.calls.values()]
+      .filter((c) => !tenantSlug || c.tenant?.entity.slug === tenantSlug)
+      .map((c) => ({
+        callId: c.callId,
+        tenant: c.tenant?.entity.slug,
+        direction: c.direction,
+        agentExt: c.agentExt,
+        remoteNumber: c.remoteNumber,
+        state: c.answeredEmitted ? 'answered' : 'ringing',
+        startedAt: c.startedAt.toISOString(),
+        channels: [...c.channels.values()].map((ch) => ch.name),
+      }));
   }
 
   @OnEvent('ami.event')
-  handleAmiEvent({ tenantId, msg }: { tenantId: string; msg: AmiMessage }): void {
+  handleAmiEvent({ connectionId, msg }: { connectionId: string; msg: AmiMessage }): void {
     switch (msg.Event) {
       case 'Newchannel':
-        return this.onNewchannel(tenantId, msg);
+        return this.onNewchannel(connectionId, msg);
       case 'DialBegin':
-        return this.onDialBegin(msg);
+        return this.onDialBegin(connectionId, msg);
       case 'DialEnd':
-        return this.onDialEnd(msg);
+        return this.onDialEnd(connectionId, msg);
       case 'BridgeEnter':
-        return this.markAnswered(msg.Linkedid);
+        return this.markAnswered(this.callOf(connectionId, msg));
       case 'Newstate':
-        if (msg.ChannelStateDesc === 'Up') this.markAnswered(msg.Linkedid);
+        if (msg.ChannelStateDesc === 'Up') this.markAnswered(this.callOf(connectionId, msg));
         return;
       case 'VarSet':
-        return this.onVarSet(msg);
+        return this.onVarSet(connectionId, msg);
       case 'Hangup':
-        return this.onHangup(msg);
+        return this.onHangup(connectionId, msg);
       default:
         return;
     }
@@ -102,116 +96,98 @@ export class CallStateService {
 
   // ---------------------------------------------------------------- events
 
-  private onNewchannel(tenantId: string, msg: AmiMessage): void {
-    const linkedid = msg.Linkedid;
-    if (!linkedid || !msg.Uniqueid || !msg.Channel) return;
+  private onNewchannel(connectionId: string, msg: AmiMessage): void {
+    if (!msg.Linkedid || !msg.Uniqueid || !msg.Channel) return;
+    const key = `${connectionId}:${msg.Linkedid}`;
 
-    let call = this.calls.get(linkedid);
-    const channel = this.trackChannel(msg);
-
+    let call = this.calls.get(key);
     if (!call) {
       call = {
-        callId: linkedid,
-        tenantId,
+        key,
+        callId: msg.Linkedid,
+        connectionId,
         channels: new Map(),
-        direction: this.detectDirection(channel),
         startedAt: new Date(),
         ringingEmitted: false,
         answeredEmitted: false,
         endedEmitted: false,
       };
-      this.calls.set(linkedid, call);
+      this.calls.set(key, call);
     }
-    call.channels.set(channel.uniqueid, channel);
-    this.resolveParties(call);
-
-    if (!call.ringingEmitted) {
-      call.ringingEmitted = true;
-      this.bus.emit(CALL_EVENTS.ringing, {
-        callId: call.callId,
-        tenantId: call.tenantId,
-        direction: call.direction,
-        agentExt: call.agentExt,
-        remoteNumber: call.remoteNumber,
-        remoteName: call.remoteName,
-        startedAt: call.startedAt.toISOString(),
-      });
-    }
+    call.channels.set(msg.Uniqueid, this.trackChannel(msg));
+    this.tryResolveTenant(call);
+    this.tryEmitRinging(call);
   }
 
-  private onDialBegin(msg: AmiMessage): void {
-    const call = msg.Linkedid ? this.calls.get(msg.Linkedid) : undefined;
+  private onDialBegin(connectionId: string, msg: AmiMessage): void {
+    const call = this.callOf(connectionId, msg);
     if (!call) return;
-    // The dialed destination is the best signal for which agent is ringing
-    // on an inbound call (and for the remote party on an outbound one).
     const destExt = this.endpointOf(msg.DestChannel ?? '');
-    if (destExt && this.extensionPattern.test(destExt)) {
+    if (destExt && call.tenant?.extensionRegex.test(destExt)) {
       call.agentExt ??= destExt;
     } else if (msg.DialString) {
       call.remoteNumber ??= msg.DialString;
     }
+    this.tryResolveTenant(call);
+    this.tryEmitRinging(call);
   }
 
-  private onDialEnd(msg: AmiMessage): void {
-    const call = msg.Linkedid ? this.calls.get(msg.Linkedid) : undefined;
+  private onDialEnd(connectionId: string, msg: AmiMessage): void {
+    const call = this.callOf(connectionId, msg);
     if (!call) return;
     call.lastDialStatus = msg.DialStatus;
-    if (msg.DialStatus === 'ANSWER') this.markAnswered(msg.Linkedid);
+    if (msg.DialStatus === 'ANSWER') this.markAnswered(call);
   }
 
-  private markAnswered(linkedid?: string): void {
-    const call = linkedid ? this.calls.get(linkedid) : undefined;
-    if (!call || call.answeredEmitted) return;
-    call.answeredEmitted = true;
-    call.answeredAt = new Date();
-    this.bus.emit(CALL_EVENTS.answered, {
-      callId: call.callId,
-      tenantId: call.tenantId,
-      answeredAt: call.answeredAt.toISOString(),
-    });
-  }
-
-  /**
-   * CTI_CALL_REF is set by our own Originate action; seeing it proves this
-   * call is a click-to-call we initiated — tie it to the API's callRef and
-   * pin the direction, which channel heuristics get wrong for Local legs.
-   */
-  private onVarSet(msg: AmiMessage): void {
+  /** CTI_CALL_REF marks a click-to-call we originated (see PbxSupervisor). */
+  private onVarSet(connectionId: string, msg: AmiMessage): void {
     if (msg.Variable !== 'CTI_CALL_REF') return;
-    const call = msg.Linkedid ? this.calls.get(msg.Linkedid) : undefined;
+    const call = this.callOf(connectionId, msg);
     if (!call) return;
     call.callRef = msg.Value;
     call.direction = 'outbound';
   }
 
-  private onHangup(msg: AmiMessage): void {
-    const call = msg.Linkedid ? this.calls.get(msg.Linkedid) : undefined;
+  private markAnswered(call?: CallRecord): void {
+    if (!call || call.answeredEmitted) return;
+    call.answeredEmitted = true;
+    call.answeredAt = new Date();
+    if (!call.tenant) return;
+    this.bus.emit(CALL_EVENTS.answered, {
+      callId: call.callId,
+      tenantId: call.tenant.entity.slug,
+      answeredAt: call.answeredAt.toISOString(),
+    });
+  }
+
+  private onHangup(connectionId: string, msg: AmiMessage): void {
+    const call = this.callOf(connectionId, msg);
     if (!call) return;
     const channel = msg.Uniqueid ? call.channels.get(msg.Uniqueid) : undefined;
     if (channel) channel.hungUp = true;
 
-    const allDown = [...call.channels.values()].every((c) => c.hungUp);
-    if (!allDown) return;
-
-    // Grace period: another leg may still appear (transfers), and Cdr events
-    // can trail the final Hangup. Reset the timer on every qualifying Hangup.
+    if (![...call.channels.values()].every((c) => c.hungUp)) return;
     if (call.finalizeTimer) clearTimeout(call.finalizeTimer);
     call.finalizeTimer = setTimeout(() => this.finalize(call), this.finalizeGraceMs);
   }
 
   private finalize(call: CallRecord): void {
     if (call.endedEmitted) return;
-    const stillDown = [...call.channels.values()].every((c) => c.hungUp);
-    if (!stillDown) return; // a new leg joined during the grace period
+    if (![...call.channels.values()].every((c) => c.hungUp)) return;
 
     call.endedEmitted = true;
-    this.calls.delete(call.callId);
+    this.calls.delete(call.key);
+
+    if (!call.tenant) {
+      this.logger.warn(`Call ${call.callId} matched no tenant on connection ${call.connectionId}; dropped`);
+      return;
+    }
 
     const endedAt = new Date();
     const event: CallEndedEvent = {
       callId: call.callId,
-      tenantId: call.tenantId,
-      direction: call.direction,
+      tenantId: call.tenant.entity.slug,
+      direction: call.direction ?? 'internal',
       agentExt: call.agentExt,
       remoteNumber: call.remoteNumber,
       disposition: this.disposition(call),
@@ -225,11 +201,58 @@ export class CallStateService {
     };
     this.bus.emit(CALL_EVENTS.ended, event);
     this.logger.log(
-      `Call ${call.callId} ended: ${event.disposition}, ${event.durationSec}s (billsec ${event.billsecSec}s)`,
+      `[${call.tenant.entity.slug}] call ${call.callId} ended: ${event.disposition}, ${event.durationSec}s`,
     );
   }
 
   // ---------------------------------------------------------------- helpers
+
+  private callOf(connectionId: string, msg: AmiMessage): CallRecord | undefined {
+    return msg.Linkedid ? this.calls.get(`${connectionId}:${msg.Linkedid}`) : undefined;
+  }
+
+  private tryResolveTenant(call: CallRecord): void {
+    if (call.tenant) return;
+    const channels = [...call.channels.values()];
+    for (const channel of channels) {
+      const tenant = this.registry.resolveTenantForCall(call.connectionId, {
+        context: channel.context,
+        extensions: channels.flatMap((c) => (c.endpoint ? [c.endpoint] : [])),
+      });
+      if (tenant) {
+        call.tenant = tenant;
+        return;
+      }
+    }
+  }
+
+  /**
+   * Ringing is emitted once, as soon as the owning tenant is known — later
+   * AMI events (DialBegin) may enrich party info, but the pop must be early.
+   */
+  private tryEmitRinging(call: CallRecord): void {
+    if (call.ringingEmitted || !call.tenant) return;
+    this.resolveParties(call);
+    call.direction ??= this.detectDirection(call);
+    call.ringingEmitted = true;
+    this.bus.emit(CALL_EVENTS.ringing, {
+      callId: call.callId,
+      tenantId: call.tenant.entity.slug,
+      direction: call.direction,
+      agentExt: call.agentExt,
+      remoteNumber: call.remoteNumber,
+      remoteName: call.remoteName,
+      startedAt: call.startedAt.toISOString(),
+    });
+    // A late answer may have been observed before the tenant resolved.
+    if (call.answeredEmitted && call.answeredAt) {
+      this.bus.emit(CALL_EVENTS.answered, {
+        callId: call.callId,
+        tenantId: call.tenant.entity.slug,
+        answeredAt: call.answeredAt.toISOString(),
+      });
+    }
+  }
 
   private trackChannel(msg: AmiMessage): TrackedChannel {
     const name = msg.Channel!;
@@ -237,6 +260,7 @@ export class CallStateService {
       uniqueid: msg.Uniqueid!,
       name,
       callerIdNum: msg.CallerIDNum && msg.CallerIDNum !== '<unknown>' ? msg.CallerIDNum : undefined,
+      context: msg.Context,
       isLocal: name.startsWith('Local/'),
       endpoint: this.endpointOf(name),
       hungUp: false,
@@ -249,26 +273,23 @@ export class CallStateService {
     return m?.[1];
   }
 
-  private detectDirection(first: TrackedChannel): CallDirection {
+  private detectDirection(call: CallRecord): CallDirection {
+    const regex = call.tenant!.extensionRegex;
+    const first = [...call.channels.values()][0];
+    if (!first) return 'internal';
     const fromExtension =
-      (first.callerIdNum && this.extensionPattern.test(first.callerIdNum)) ||
-      (first.endpoint && !first.isLocal && this.extensionPattern.test(first.endpoint));
+      (first.callerIdNum && regex.test(first.callerIdNum)) ||
+      (first.endpoint && !first.isLocal && regex.test(first.endpoint));
     return fromExtension ? 'outbound' : 'inbound';
   }
 
-  /**
-   * Prefer real (non-Local) channels when resolving who the agent and the
-   * remote party are; fall back to Local legs so lab/Local-only calls still
-   * produce usable events.
-   */
   private resolveParties(call: CallRecord): void {
+    const regex = call.tenant!.extensionRegex;
     const channels = [...call.channels.values()];
     const ranked = [...channels.filter((c) => !c.isLocal), ...channels.filter((c) => c.isLocal)];
     for (const ch of ranked) {
-      if (!call.agentExt && ch.endpoint && this.extensionPattern.test(ch.endpoint)) {
-        call.agentExt = ch.endpoint;
-      }
-      if (!call.remoteNumber && ch.callerIdNum && !this.extensionPattern.test(ch.callerIdNum)) {
+      if (!call.agentExt && ch.endpoint && regex.test(ch.endpoint)) call.agentExt = ch.endpoint;
+      if (!call.remoteNumber && ch.callerIdNum && !regex.test(ch.callerIdNum)) {
         call.remoteNumber = ch.callerIdNum;
       }
     }

@@ -1,31 +1,51 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
-import { AmiConnectionService } from '../pbx-connector/ami-connection.service';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
+import { PbxSupervisorService } from '../pbx-connector/pbx-supervisor.service';
 import { CallStateService } from '../call-state/call-state.service';
-import { ApiKeyGuard } from './api-key.guard';
+import { ResolvedTenant } from '../tenants/tenant-registry.service';
+import { TenantApiKeyGuard } from './api-key.guard';
 import { OriginateDto } from './originate.dto';
 
 @Controller()
 export class CallsController {
   constructor(
-    private readonly ami: AmiConnectionService,
+    private readonly supervisor: PbxSupervisorService,
     private readonly callState: CallStateService,
   ) {}
 
   @Get('health')
   health() {
-    return { status: this.ami.connected ? 'ok' : 'degraded', pbxConnected: this.ami.connected };
+    const connections = this.supervisor.statuses();
+    return {
+      status: connections.every((c) => c.connected) ? 'ok' : 'degraded',
+      connections,
+    };
   }
 
-  @UseGuards(ApiKeyGuard)
+  @UseGuards(TenantApiKeyGuard)
   @Post('v1/calls/originate')
-  async originate(@Body() dto: OriginateDto) {
-    const { callRef } = await this.ami.originate({ agentExt: dto.agentExt, number: dto.number });
+  async originate(@Req() req: { tenant: ResolvedTenant }, @Body() dto: OriginateDto) {
+    const tenant = req.tenant;
+    // A tenant's key can only ring that tenant's own extensions.
+    if (!tenant.extensionRegex.test(dto.agentExt)) {
+      throw new BadRequestException(
+        `agentExt ${dto.agentExt} is not an extension of tenant ${tenant.entity.slug}`,
+      );
+    }
+    const { callRef } = await this.supervisor.originate(tenant, dto.agentExt, dto.number);
     return { status: 'originating', callRef, agentExt: dto.agentExt, number: dto.number };
   }
 
-  @UseGuards(ApiKeyGuard)
+  @UseGuards(TenantApiKeyGuard)
   @Get('v1/calls')
-  activeCalls() {
-    return { calls: this.callState.activeCalls() };
+  activeCalls(@Req() req: { tenant: ResolvedTenant }) {
+    return { calls: this.callState.activeCalls(req.tenant.entity.slug) };
   }
 }

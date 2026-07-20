@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: cti-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cti
+      POSTGRES_PASSWORD: cti-dev
+      POSTGRES_DB: cti
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - cti_pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: cti-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6380:6379"
+    volumes:
+      - cti_redisdata:/data
+
+volumes:
+  cti_pgdata:
+  cti_redisdata:

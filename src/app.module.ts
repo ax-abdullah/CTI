@@ -1,6 +1,9 @@
+import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { TenantsModule } from './tenants/tenants.module';
 import { PbxConnectorModule } from './pbx-connector/pbx-connector.module';
 import { CallStateModule } from './call-state/call-state.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
@@ -10,6 +13,25 @@ import { ApiModule } from './api/api.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     EventEmitterModule.forRoot({ wildcard: true, delimiter: '.' }),
+    TypeOrmModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        type: 'postgres',
+        url: config.getOrThrow<string>('DATABASE_URL'),
+        autoLoadEntities: true,
+        synchronize: true, // dev only — switch to migrations before production
+      }),
+    }),
+    BullModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        connection: {
+          host: config.getOrThrow<string>('REDIS_HOST'),
+          port: Number(config.getOrThrow<string>('REDIS_PORT')),
+        },
+      }),
+    }),
+    TenantsModule,
     PbxConnectorModule,
     CallStateModule,
     WebhooksModule,
