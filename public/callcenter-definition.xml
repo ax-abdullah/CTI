@@ -1,0 +1,18 @@
+<!--
+  Salesforce Call Center definition for the CTI softphone.
+  Import: Setup -> Feature Settings -> Service -> Call Center -> Import,
+  then assign users to the call center. Replace CTI_BASE_URL with the
+  public HTTPS URL of this CTI platform. The softphone URL includes the
+  Open CTI library location so the page can wire screen pops and
+  click-to-dial (adjust the API version to the org's).
+-->
+<callCenter>
+  <section sortOrder="0" name="reqGeneralInfo" label="General Information">
+    <item sortOrder="0" name="reqInternalName" label="InternalName">CTIPlatformSoftphone</item>
+    <item sortOrder="1" name="reqDisplayName" label="Display Name">CTI Platform Softphone</item>
+    <item sortOrder="2" name="reqAdapterUrl" label="CTI Adapter URL">CTI_BASE_URL/softphone?opencti=https%3A%2F%2F{instance}.lightning.force.com%2Fsupport%2Fapi%2F61.0%2Flightning%2Fopencti_min.js</item>
+    <item sortOrder="3" name="reqUseApi" label="Use CTI API">true</item>
+    <item sortOrder="4" name="reqSoftphoneHeight" label="Softphone Height">420</item>
+    <item sortOrder="5" name="reqSoftphoneWidth" label="Softphone Width">340</item>
+  </section>
+</callCenter>

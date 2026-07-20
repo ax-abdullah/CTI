@@ -8,6 +8,8 @@ import { PbxConnectorModule } from './pbx-connector/pbx-connector.module';
 import { CallStateModule } from './call-state/call-state.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { ZohoModule } from './crm-adapters/zoho/zoho.module';
+import { SalesforceModule } from './crm-adapters/salesforce/salesforce.module';
+import { SoftphoneModule } from './softphone/softphone.module';
 import { ApiModule } from './api/api.module';
 
 @Module({
@@ -37,6 +39,8 @@ import { ApiModule } from './api/api.module';
     CallStateModule,
     WebhooksModule,
     ZohoModule,
+    SalesforceModule,
+    SoftphoneModule,
     ApiModule,
   ],
 })

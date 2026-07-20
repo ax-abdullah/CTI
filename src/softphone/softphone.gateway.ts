@@ -1,0 +1,84 @@
+import { Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { OnEvent } from '@nestjs/event-emitter';
+import { OnGatewayConnection, OnGatewayDisconnect, WebSocketGateway } from '@nestjs/websockets';
+import type { IncomingMessage } from 'node:http';
+import type { WebSocket } from 'ws';
+import {
+  CALL_EVENTS,
+  CallAnsweredEvent,
+  CallEndedEvent,
+  CallRingingEvent,
+} from '../call-state/normalized-events';
+import { verifyAgentToken } from './agent-token.util';
+
+interface AgentSocket {
+  socket: WebSocket;
+  tenantSlug: string;
+  ext: string;
+}
+
+/**
+ * Real-time channel to embedded softphones (Salesforce Open CTI panel, or
+ * any other client). Connect with ws://host/softphone-ws?token=<agent JWT>;
+ * each socket receives only its own agent's calls.
+ *
+ * answered/ended events carry no agentExt, so the gateway remembers which
+ * (tenant, ext) a callId was ring-routed to and follows up on that key.
+ */
+@WebSocketGateway({ path: '/softphone-ws' })
+export class SoftphoneGateway implements OnGatewayConnection, OnGatewayDisconnect {
+  private readonly logger = new Logger(SoftphoneGateway.name);
+  private readonly clients = new Map<WebSocket, AgentSocket>();
+  private readonly callRoutes = new Map<string, { tenantSlug: string; ext: string }>();
+
+  constructor(private readonly config: ConfigService) {}
+
+  handleConnection(socket: WebSocket, request: IncomingMessage): void {
+    const url = new URL(request.url ?? '/', 'http://localhost');
+    const token = url.searchParams.get('token') ?? '';
+    const claims = verifyAgentToken(token, this.config.getOrThrow('SOFTPHONE_JWT_SECRET'));
+    if (!claims) {
+      socket.close(4401, 'invalid token');
+      return;
+    }
+    this.clients.set(socket, { socket, tenantSlug: claims.tenantSlug, ext: claims.ext });
+    socket.send(JSON.stringify({ type: 'connected', ext: claims.ext }));
+    this.logger.log(`Softphone connected: ${claims.tenantSlug}/${claims.ext}`);
+  }
+
+  handleDisconnect(socket: WebSocket): void {
+    const client = this.clients.get(socket);
+    if (client) this.logger.log(`Softphone disconnected: ${client.tenantSlug}/${client.ext}`);
+    this.clients.delete(socket);
+  }
+
+  @OnEvent(CALL_EVENTS.ringing)
+  onRinging(event: CallRingingEvent): void {
+    if (!event.agentExt) return;
+    this.callRoutes.set(event.callId, { tenantSlug: event.tenantId, ext: event.agentExt });
+    this.push(event.tenantId, event.agentExt, { type: 'call.ringing', ...event });
+  }
+
+  @OnEvent(CALL_EVENTS.answered)
+  onAnswered(event: CallAnsweredEvent): void {
+    const route = this.callRoutes.get(event.callId);
+    if (route) this.push(route.tenantSlug, route.ext, { type: 'call.answered', ...event });
+  }
+
+  @OnEvent(CALL_EVENTS.ended)
+  onEnded(event: CallEndedEvent): void {
+    const route = this.callRoutes.get(event.callId);
+    this.callRoutes.delete(event.callId);
+    if (route) this.push(route.tenantSlug, route.ext, { type: 'call.ended', ...event });
+  }
+
+  private push(tenantSlug: string, ext: string, message: unknown): void {
+    const payload = JSON.stringify(message);
+    for (const client of this.clients.values()) {
+      if (client.tenantSlug === tenantSlug && client.ext === ext) {
+        client.socket.send(payload);
+      }
+    }
+  }
+}

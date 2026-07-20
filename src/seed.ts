@@ -92,10 +92,24 @@ async function main() {
       webhookUrl: 'http://127.0.0.1:4001/cti-events',
       webhookSecret: 'receiver-b-secret',
       agents: [
-        { ext: '2000', displayName: 'B Echo Test', crmRefs: {} },
-        { ext: '2001', displayName: 'B Agent 2001', crmRefs: {} },
+        { ext: '2000', displayName: 'B Echo Test', crmRefs: { salesforce: 'sfuser-2000' } },
+        { ext: '2001', displayName: 'B Agent 2001', crmRefs: { salesforce: 'sfuser-2001' } },
       ],
-      zoho: undefined, // tenant-b has no CRM — webhooks only
+      zoho: undefined,
+      // Mock Salesforce in the lab; production would be the org's
+      // login.salesforce.com + instance URL with a real connected app.
+      salesforce: {
+        config: {
+          loginBaseUrl: process.env.SEED_SF_LOGIN_URL ?? 'http://127.0.0.1:4200',
+          instanceUrl: process.env.SEED_SF_INSTANCE_URL ?? 'http://127.0.0.1:4200',
+          apiVersion: '61.0',
+          clientId: 'mock-sf-client-id',
+        },
+        secrets: {
+          clientSecret: 'mock-sf-client-secret',
+          refreshToken: 'mock-sf-refresh-token',
+        },
+      },
     },
   ];
 
@@ -116,13 +130,17 @@ async function main() {
     for (const agent of spec.agents) {
       await ds.getRepository(Agent).save({ tenantId: tenant.id, ...agent });
     }
-    if (spec.zoho) {
+    for (const [type, integration] of [
+      ['zoho', spec.zoho],
+      ['salesforce', (spec as { salesforce?: { config: Record<string, string>; secrets: Record<string, string> } }).salesforce],
+    ] as const) {
+      if (!integration) continue;
       await ds.getRepository(CrmIntegration).save({
         tenantId: tenant.id,
-        type: 'zoho',
+        type,
         enabled: true,
-        config: spec.zoho.config,
-        secretsEnc: encrypt(key, JSON.stringify(spec.zoho.secrets)),
+        config: integration.config,
+        secretsEnc: encrypt(key, JSON.stringify(integration.secrets)),
       });
     }
     console.log(`${spec.slug} API key (shown once): ${apiKey}`);

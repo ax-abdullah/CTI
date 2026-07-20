@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CTI Softphone</title>
+<style>
+  :root { --bg:#fff; --fg:#16325c; --muted:#54698d; --line:#d8dde6; --accent:#0070d2; --ok:#04844b; --warn:#c23934; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; color:var(--fg); background:var(--bg); }
+  .wrap { padding:12px; display:flex; flex-direction:column; gap:12px; }
+  .row { display:flex; gap:8px; align-items:center; }
+  .pill { padding:2px 10px; border-radius:999px; font-size:12px; border:1px solid var(--line); color:var(--muted); }
+  .pill.ok { color:var(--ok); border-color:var(--ok); }
+  .pill.bad { color:var(--warn); border-color:var(--warn); }
+  input, button { font:inherit; padding:8px 10px; border-radius:6px; border:1px solid var(--line); }
+  input { flex:1; min-width:0; }
+  button { background:var(--accent); border-color:var(--accent); color:#fff; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
+  #call { border:1px solid var(--line); border-radius:8px; padding:12px; display:none; }
+  #call.active { display:block; }
+  #callState { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
+  #callNumber { font-size:20px; font-variant-numeric:tabular-nums; margin:4px 0; }
+  #log { font-size:12px; color:var(--muted); max-height:140px; overflow-y:auto; border-top:1px solid var(--line); padding-top:8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="row">
+    <strong>CTI Softphone</strong>
+    <span id="wsState" class="pill">connecting…</span>
+    <span id="agent" class="pill"></span>
+  </div>
+
+  <div class="row">
+    <input id="dialInput" type="tel" placeholder="Number to dial" inputmode="tel">
+    <button id="dialBtn" disabled>Dial</button>
+  </div>
+
+  <div id="call">
+    <div id="callState"></div>
+    <div id="callNumber"></div>
+    <div id="callTimer" class="pill"></div>
+  </div>
+
+  <div id="log"></div>
+</div>
+
+<script>
+/**
+ * Runs standalone (lab) or embedded in Salesforce as the Call Center
+ * softphone. When embedded, the page is loaded with ?sfdcIFrameOrigin=...
+ * and the Open CTI library is injected by loading
+ *   {salesforce-instance}/support/api/61.0/lightning/opencti_min.js
+ * Query params: token=<agent JWT> (required), opencti=<opencti_min.js URL>
+ * (present only when embedded).
+ */
+(() => {
+  const qs = new URLSearchParams(location.search);
+  const token = qs.get('token') || localStorage.getItem('cti_token') || '';
+  if (qs.get('token')) localStorage.setItem('cti_token', qs.get('token'));
+
+  const el = (id) => document.getElementById(id);
+  const log = (msg) => {
+    const line = document.createElement('div');
+    line.textContent = `${new Date().toLocaleTimeString()} ${msg}`;
+    el('log').prepend(line);
+  };
+
+  let opencti = null;
+  const openctiUrl = qs.get('opencti');
+  if (openctiUrl) {
+    const s = document.createElement('script');
+    s.src = openctiUrl;
+    s.onload = () => {
+      opencti = window.sforce && window.sforce.opencti;
+      if (!opencti) return log('Open CTI script loaded but sforce.opencti missing');
+      opencti.enableClickToDial({ callback: () => {} });
+      opencti.onClickToDial({
+        listener: (payload) => {
+          el('dialInput').value = payload.number;
+          dial(payload.number);
+        },
+      });
+      log('Open CTI ready (click-to-dial enabled)');
+    };
+    document.head.appendChild(s);
+  }
+
+  // ---- live events over WebSocket -----------------------------------
+  let timerHandle = null;
+  const showCall = (state, number) => {
+    el('call').classList.add('active');
+    el('callState').textContent = state;
+    if (number) el('callNumber').textContent = number;
+  };
+  const startTimer = () => {
+    const t0 = Date.now();
+    timerHandle = setInterval(() => {
+      const s = Math.floor((Date.now() - t0) / 1000);
+      el('callTimer').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+    }, 1000);
+  };
+  const clearCall = () => {
+    clearInterval(timerHandle);
+    setTimeout(() => { el('call').classList.remove('active'); el('callTimer').textContent = ''; }, 4000);
+  };
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/softphone-ws?token=${encodeURIComponent(token)}`);
+  ws.onopen = () => { el('wsState').textContent = 'live'; el('wsState').className = 'pill ok'; el('dialBtn').disabled = false; };
+  ws.onclose = (e) => { el('wsState').textContent = e.code === 4401 ? 'auth failed' : 'disconnected'; el('wsState').className = 'pill bad'; el('dialBtn').disabled = true; };
+  ws.onmessage = (m) => {
+    const ev = JSON.parse(m.data);
+    if (ev.type === 'connected') { el('agent').textContent = `ext ${ev.ext}`; return; }
+    if (ev.type === 'call.ringing') {
+      showCall(ev.direction === 'outbound' ? 'dialing' : 'ringing', ev.remoteNumber || '');
+      log(`ringing ${ev.direction} ${ev.remoteNumber || ''} (${ev.callId})`);
+      if (opencti && ev.direction !== 'outbound' && ev.remoteNumber) {
+        opencti.searchAndScreenPop({
+          searchParams: ev.remoteNumber,
+          queryParams: '',
+          callType: opencti.CALL_TYPE.INBOUND,
+          deferred: false,
+          callback: (r) => { if (!r.success) log('screen pop failed'); },
+        });
+      }
+      return;
+    }
+    if (ev.type === 'call.answered') { showCall('on call'); startTimer(); log(`answered (${ev.callId})`); return; }
+    if (ev.type === 'call.ended') { showCall(`ended - ${ev.disposition.toLowerCase()}`); clearCall(); log(`ended ${ev.disposition}, ${ev.durationSec}s (${ev.callId})`); }
+  };
+
+  // ---- click-to-dial -------------------------------------------------
+  const dial = async (number) => {
+    if (!number) return;
+    el('dialBtn').disabled = true;
+    try {
+      const res = await fetch('/v1/softphone/originate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ number }),
+      });
+      const data = await res.json();
+      log(res.ok ? `originating -> ${number} (${data.callRef})` : `dial failed: ${data.message}`);
+    } catch (err) {
+      log(`dial failed: ${err.message}`);
+    } finally {
+      el('dialBtn').disabled = false;
+    }
+  };
+  el('dialBtn').addEventListener('click', () => dial(el('dialInput').value.trim()));
+  el('dialInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') dial(el('dialInput').value.trim()); });
+})();
+</script>
+</body>
+</html>

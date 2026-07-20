@@ -2,7 +2,17 @@
 
 Multi-tenant CTI middleware connecting Asterisk/FreePBX to CRMs — click-to-call, screen pops, automated call logging. Design rationale, event model, and roadmap: [cti-architecture.md](./cti-architecture.md).
 
-**Phase 3 status:** Zoho PhoneBridge adapter on top of the Phase-2 multi-tenant core (PostgreSQL registry with encrypted secrets, shared-PBX tenant routing, durable BullMQ delivery, tenant-scoped API keys). Salesforce Open CTI comes in Phase 4.
+**Phase 4 status:** Salesforce Open CTI adapter (embedded softphone + Task logging) on top of the Phase-3 stack: multi-tenant core (PostgreSQL registry with encrypted secrets, shared-PBX tenant routing, durable BullMQ delivery, tenant-scoped API keys) + Zoho PhoneBridge adapter.
+
+## Salesforce Open CTI adapter
+
+Salesforce is client-side: we host the softphone page ([public/softphone.html](./public/softphone.html)), Salesforce embeds it via the Call Center definition ([public/callcenter-definition.xml](./public/callcenter-definition.xml), served at `/softphone/callcenter-definition.xml`).
+
+- **Agent session:** `POST /v1/softphone/login {ext}` (tenant API key) returns a short-lived HS256 token (`SOFTPHONE_JWT_SECRET`).
+- **Live events:** the page connects to `ws(s)://host/softphone-ws?token=…`; the gateway pushes only that agent's `call.*` events. On inbound ringing the page calls `sforce.opencti.searchAndScreenPop` (when embedded) — Salesforce matches the number and pops the record.
+- **Click-to-dial:** Open CTI's `onClickToDial` (or the page's dial pad) POSTs `/v1/softphone/originate` with the agent token → agent-leg-first originate.
+- **Call logging:** `call.ended` for Salesforce-enabled tenants flows through the durable `salesforce-delivery` queue; the processor exchanges the org's connected-app refresh token for an access token and creates a `Task` (TaskSubtype Call, duration, disposition) owned by the mapped user (`Agent.crmRefs.salesforce`).
+- **Lab testing:** `node scripts/mock-salesforce.mjs 4200` mimics the OAuth + Task endpoints; the seed points tenant-b at it. In production, import the Call Center XML (Setup → Call Center), replace `CTI_BASE_URL`, and assign users.
 
 ## Zoho PhoneBridge adapter
 
