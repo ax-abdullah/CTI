@@ -64,6 +64,12 @@ export class TenantRegistryService implements OnModuleInit {
     return this.connections;
   }
 
+  /** Resolves a reverse-mode connection from its connector token. */
+  connectionByConnectorToken(token: string): PbxConnection | undefined {
+    const hash = CryptoService.hashApiKey(token);
+    return this.connections.find((c) => c.mode === 'reverse' && c.connectorTokenHash === hash);
+  }
+
   amiSecretFor(connection: PbxConnection): string {
     return this.crypto.decrypt(connection.secretEnc);
   }

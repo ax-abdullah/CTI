@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CTI Admin</title>
+<style>
+  :root { --bg:#fff; --fg:#1a2733; --muted:#5c6b7a; --line:#dde3ea; --accent:#0b5cad; --ok:#0a7d43; --warn:#b3261e; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12181f; --fg:#e6ecf2; --muted:#93a1b0; --line:#2a3542; --accent:#5aa2e0; --ok:#4cc38a; --warn:#e5726b; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; color:var(--fg); background:var(--bg); }
+  .wrap { max-width:960px; margin:0 auto; padding:20px; display:flex; flex-direction:column; gap:20px; }
+  header { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  h1 { font-size:18px; margin:0 auto 0 0; }
+  input, button { font:inherit; padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--bg); color:var(--fg); }
+  button { background:var(--accent); border-color:var(--accent); color:#fff; cursor:pointer; }
+  section h2 { font-size:13px; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin:0 0 8px; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; }
+  th { color:var(--muted); font-weight:600; font-size:12px; }
+  .pill { display:inline-block; padding:1px 9px; border-radius:999px; font-size:12px; border:1px solid var(--line); }
+  .pill.ok { color:var(--ok); border-color:var(--ok); }
+  .pill.bad { color:var(--warn); border-color:var(--warn); }
+  #status { color:var(--muted); font-size:12px; }
+  .empty { color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>CTI Platform — Admin</h1>
+    <span id="status"></span>
+    <input id="key" type="password" placeholder="Admin key" size="24">
+    <button id="reload">Reload registry</button>
+  </header>
+
+  <section><h2>PBX connections</h2><table id="connections"></table></section>
+  <section><h2>Tenants</h2><table id="tenants"></table></section>
+  <section><h2>Active calls</h2><table id="calls"></table></section>
+  <section><h2>Delivery queues</h2><table id="queues"></table></section>
+</div>
+
+<script>
+(() => {
+  const el = (id) => document.getElementById(id);
+  el('key').value = localStorage.getItem('cti_admin_key') || '';
+  el('key').addEventListener('change', () => localStorage.setItem('cti_admin_key', el('key').value));
+
+  const table = (id, headers, rows, empty) => {
+    const t = el(id);
+    if (!rows.length) { t.innerHTML = `<tr><td class="empty">${empty}</td></tr>`; return; }
+    t.innerHTML =
+      `<tr>${headers.map((h) => `<th>${h}</th>`).join('')}</tr>` +
+      rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`).join('');
+  };
+
+  const refresh = async () => {
+    const key = el('key').value;
+    if (!key) { el('status').textContent = 'enter admin key'; return; }
+    try {
+      const res = await fetch('/admin/overview', { headers: { 'X-Admin-Key': key } });
+      if (!res.ok) { el('status').textContent = `error ${res.status}`; return; }
+      const o = await res.json();
+      el('status').textContent = `updated ${new Date().toLocaleTimeString()}`;
+
+      table('connections', ['Name', 'Mode', 'Status'],
+        o.connections.map((c) => [c.name, c.mode,
+          `<span class="pill ${c.connected ? 'ok' : 'bad'}">${c.connected ? 'connected' : 'down'}</span>`]),
+        'no connections');
+      table('tenants', ['Slug', 'Name', 'Agents', 'Integrations', 'Webhook'],
+        o.tenants.map((t) => [t.slug, t.name, t.agents, t.integrations.join(', ') || '—', t.webhookUrl || '—']),
+        'no tenants');
+      table('calls', ['Call', 'Tenant', 'Direction', 'Agent', 'State', 'Started'],
+        o.activeCalls.map((c) => [c.callId, c.tenant || '?', c.direction || '?', c.agentExt || '?', c.state,
+          new Date(c.startedAt).toLocaleTimeString()]),
+        'no calls in flight');
+      table('queues', ['Queue', 'Waiting', 'Active', 'Completed', 'Failed'],
+        Object.entries(o.queues).map(([name, q]) => [name, q.waiting ?? 0, q.active ?? 0, q.completed ?? 0,
+          q.failed ? `<span class="pill bad">${q.failed}</span>` : 0]),
+        'no queues');
+    } catch (err) {
+      el('status').textContent = `error: ${err.message}`;
+    }
+  };
+
+  el('reload').addEventListener('click', async () => {
+    const res = await fetch('/admin/reload', { method: 'POST', headers: { 'X-Admin-Key': el('key').value } });
+    el('status').textContent = res.ok ? 'registry reloaded' : `reload failed (${res.status})`;
+    refresh();
+  });
+
+  refresh();
+  setInterval(refresh, 5000);
+})();
+</script>
+</body>
+</html>

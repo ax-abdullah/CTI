@@ -44,13 +44,25 @@ async function main() {
   await ds.getRepository(Tenant).createQueryBuilder().delete().execute();
   await ds.getRepository(PbxConnection).createQueryBuilder().delete().execute();
 
+  // SEED_PBX_MODE=reverse registers the lab PBX as a customer-style
+  // reverse connection: the cloud never dials in, the on-prem agent
+  // (scripts/connector-agent.mjs) tunnels AMI out to /connector-ws.
+  const mode = process.env.SEED_PBX_MODE === 'reverse' ? 'reverse' : 'direct';
+  const connectorToken = mode === 'reverse' ? `conn-${randomBytes(24).toString('hex')}` : null;
   const connection = await ds.getRepository(PbxConnection).save({
     name: 'lab-asterisk',
+    mode,
+    connectorTokenHash: connectorToken
+      ? createHash('sha256').update(connectorToken).digest('hex')
+      : null,
     host: process.env.SEED_AMI_HOST ?? '127.0.0.1',
     port: Number(process.env.SEED_AMI_PORT ?? 5038),
     username: process.env.SEED_AMI_USERNAME ?? 'cti',
     secretEnc: encrypt(key, amiSecret),
   });
+  if (connectorToken) {
+    console.log(`lab-asterisk connector token (shown once): ${connectorToken}`);
+  }
 
   const tenantSpecs = [
     {

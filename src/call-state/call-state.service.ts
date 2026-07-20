@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { AmiMessage } from '../pbx-connector/ami-client';
 import { TenantRegistryService, ResolvedTenant } from '../tenants/tenant-registry.service';
+import { RecordingsService } from '../recordings/recordings.service';
 import { CALL_EVENTS, CallDirection, CallEndedEvent } from './normalized-events';
 
 interface TrackedChannel {
@@ -25,6 +26,7 @@ interface CallRecord {
   remoteNumber?: string;
   remoteName?: string;
   callRef?: string;
+  recordingPath?: string;
   startedAt: Date;
   answeredAt?: Date;
   ringingEmitted: boolean;
@@ -53,6 +55,7 @@ export class CallStateService {
 
   constructor(
     private readonly registry: TenantRegistryService,
+    private readonly recordings: RecordingsService,
     private readonly bus: EventEmitter2,
   ) {}
 
@@ -139,13 +142,19 @@ export class CallStateService {
     if (msg.DialStatus === 'ANSWER') this.markAnswered(call);
   }
 
-  /** CTI_CALL_REF marks a click-to-call we originated (see PbxSupervisor). */
+  /**
+   * CTI_CALL_REF marks a click-to-call we originated (see PbxSupervisor);
+   * MIXMONITOR_FILENAME is Asterisk telling us where the recording landed.
+   */
   private onVarSet(connectionId: string, msg: AmiMessage): void {
-    if (msg.Variable !== 'CTI_CALL_REF') return;
     const call = this.callOf(connectionId, msg);
     if (!call) return;
-    call.callRef = msg.Value;
-    call.direction = 'outbound';
+    if (msg.Variable === 'CTI_CALL_REF') {
+      call.callRef = msg.Value;
+      call.direction = 'outbound';
+    } else if (msg.Variable === 'MIXMONITOR_FILENAME' && msg.Value) {
+      call.recordingPath = msg.Value;
+    }
   }
 
   private markAnswered(call?: CallRecord): void {
@@ -198,6 +207,9 @@ export class CallStateService {
       startedAt: call.startedAt.toISOString(),
       endedAt: endedAt.toISOString(),
       callRef: call.callRef,
+      recordingUrl: call.recordingPath
+        ? this.recordings.signedUrlFor(call.recordingPath)
+        : undefined,
     };
     this.bus.emit(CALL_EVENTS.ended, event);
     this.logger.log(

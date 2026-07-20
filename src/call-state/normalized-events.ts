@@ -34,6 +34,8 @@ export interface CallEndedEvent {
   startedAt: string;
   endedAt: string;
   callRef?: string;
+  /** Signed short-lived URL served by the CTI recording proxy. */
+  recordingUrl?: string;
 }
 
 export const CALL_EVENTS = {

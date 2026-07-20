@@ -10,6 +10,7 @@ import {
   CallEndedEvent,
   CallRingingEvent,
 } from '../call-state/normalized-events';
+import { AGENT_STATE_EVENT, AgentStateEvent } from '../presence/presence.service';
 import { verifyAgentToken } from './agent-token.util';
 
 interface AgentSocket {
@@ -71,6 +72,15 @@ export class SoftphoneGateway implements OnGatewayConnection, OnGatewayDisconnec
     const route = this.callRoutes.get(event.callId);
     this.callRoutes.delete(event.callId);
     if (route) this.push(route.tenantSlug, route.ext, { type: 'call.ended', ...event });
+  }
+
+  /** Presence is a team signal: broadcast to every socket of the tenant. */
+  @OnEvent(AGENT_STATE_EVENT)
+  onAgentState(event: AgentStateEvent): void {
+    const payload = JSON.stringify({ type: AGENT_STATE_EVENT, ...event });
+    for (const client of this.clients.values()) {
+      if (client.tenantSlug === event.tenantId) client.socket.send(payload);
+    }
   }
 
   private push(tenantSlug: string, ext: string, message: unknown): void {

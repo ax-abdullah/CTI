@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { PbxSupervisorService } from '../pbx-connector/pbx-supervisor.service';
 import { CallStateService } from '../call-state/call-state.service';
+import { PresenceService } from '../presence/presence.service';
 import { ResolvedTenant } from '../tenants/tenant-registry.service';
 import { TenantApiKeyGuard } from './api-key.guard';
 import { OriginateDto } from './originate.dto';
@@ -18,6 +19,7 @@ export class CallsController {
   constructor(
     private readonly supervisor: PbxSupervisorService,
     private readonly callState: CallStateService,
+    private readonly presence: PresenceService,
   ) {}
 
   @Get('health')
@@ -47,5 +49,11 @@ export class CallsController {
   @Get('v1/calls')
   activeCalls(@Req() req: { tenant: ResolvedTenant }) {
     return { calls: this.callState.activeCalls(req.tenant.entity.slug) };
+  }
+
+  @UseGuards(TenantApiKeyGuard)
+  @Get('v1/agents/state')
+  agentStates(@Req() req: { tenant: ResolvedTenant }) {
+    return { agents: this.presence.snapshot(req.tenant.entity.slug) };
   }
 }

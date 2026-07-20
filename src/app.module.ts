@@ -10,6 +10,9 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 import { ZohoModule } from './crm-adapters/zoho/zoho.module';
 import { SalesforceModule } from './crm-adapters/salesforce/salesforce.module';
 import { SoftphoneModule } from './softphone/softphone.module';
+import { PresenceModule } from './presence/presence.module';
+import { RecordingsModule } from './recordings/recordings.module';
+import { AdminModule } from './admin/admin.module';
 import { ApiModule } from './api/api.module';
 
 @Module({
@@ -41,6 +44,9 @@ import { ApiModule } from './api/api.module';
     ZohoModule,
     SalesforceModule,
     SoftphoneModule,
+    PresenceModule,
+    RecordingsModule,
+    AdminModule,
     ApiModule,
   ],
 })

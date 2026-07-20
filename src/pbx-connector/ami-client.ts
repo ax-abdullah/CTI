@@ -1,15 +1,23 @@
 import { EventEmitter } from 'node:events';
-import { Socket, connect } from 'node:net';
+import { connect } from 'node:net';
 import { randomUUID } from 'node:crypto';
+import type { Duplex } from 'node:stream';
 
 export type AmiMessage = Record<string, string>;
 
 export interface AmiClientOptions {
-  host: string;
-  port: number;
+  /** TCP target — used when no pre-established stream is supplied. */
+  host?: string;
+  port?: number;
   username: string;
   secret: string;
   actionTimeoutMs?: number;
+  /**
+   * Pre-established transport (e.g. a reverse-connector WebSocket wrapped
+   * as a Duplex). When set, host/port are ignored — the protocol is
+   * identical, only the pipe differs.
+   */
+  stream?: Duplex;
 }
 
 /**
@@ -23,7 +31,7 @@ export interface AmiClientOptions {
  * Reconnection is the owner's responsibility (see AmiConnectionService).
  */
 export class AmiClient extends EventEmitter {
-  private socket?: Socket;
+  private socket?: Duplex;
   private buffer = '';
   private greeted = false;
   private readonly pending = new Map<
@@ -38,13 +46,20 @@ export class AmiClient extends EventEmitter {
   /** Connects and logs in. Resolves once authentication is accepted. */
   async connect(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
-      const socket = connect({ host: this.opts.host, port: this.opts.port });
-      this.socket = socket;
-      socket.setKeepAlive(true, 10_000);
-      socket.once('connect', () => resolve());
-      socket.once('error', reject);
-      socket.on('data', (chunk) => this.onData(chunk.toString('utf8')));
-      socket.on('close', () => this.teardown(new Error('AMI socket closed')));
+      if (this.opts.stream) {
+        this.socket = this.opts.stream;
+        resolve();
+      } else {
+        const socket = connect({ host: this.opts.host!, port: this.opts.port! });
+        this.socket = socket;
+        socket.setKeepAlive(true, 10_000);
+        socket.once('connect', () => resolve());
+        socket.once('error', reject);
+      }
+      this.socket.on('data', (chunk: Buffer) => this.onData(chunk.toString('utf8')));
+      this.socket.on('close', () => this.teardown(new Error('AMI transport closed')));
+      this.socket.on('end', () => this.teardown(new Error('AMI transport ended')));
+      this.socket.on('error', () => this.socket?.destroy());
     });
 
     const res = await this.sendAction({
@@ -120,7 +135,11 @@ export class AmiClient extends EventEmitter {
     if (msg.Event) this.emit('event', msg);
   }
 
+  private torn = false;
+
   private teardown(err: Error): void {
+    if (this.torn) return;
+    this.torn = true;
     for (const { reject, timer } of this.pending.values()) {
       clearTimeout(timer);
       reject(err);

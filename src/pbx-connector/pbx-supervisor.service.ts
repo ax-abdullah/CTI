@@ -19,26 +19,61 @@ export class PbxSupervisorService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit(): void {
-    for (const row of this.registry.allConnections()) {
-      const connection = new SupervisedConnection(
-        {
-          connectionId: row.id,
-          name: row.name,
-          host: row.host,
-          port: row.port,
-          username: row.username,
-          secret: this.registry.amiSecretFor(row),
-        },
-        this.bus,
-      );
-      this.connections.set(row.id, connection);
+    this.reload();
+  }
+
+  onModuleDestroy(): void {
+    for (const connection of this.connections.values()) connection.stop();
+  }
+
+  /**
+   * Diffs the (re)loaded registry against running connections: unchanged
+   * ones keep running, changed ones are restarted, removed ones stopped,
+   * new ones started. Called at boot and by POST /admin/reload.
+   */
+  reload(): void {
+    const wanted = new Map(
+      this.registry.allConnections().map((row) => {
+        const connection = new SupervisedConnection(
+          {
+            connectionId: row.id,
+            name: row.name,
+            mode: row.mode,
+            host: row.host,
+            port: row.port,
+            username: row.username,
+            secret: this.registry.amiSecretFor(row),
+          },
+          this.bus,
+        );
+        return [row.id, connection] as const;
+      }),
+    );
+
+    for (const [id, existing] of this.connections) {
+      const replacement = wanted.get(id);
+      if (replacement && replacement.fingerprint() === existing.fingerprint()) {
+        wanted.delete(id); // unchanged — keep the live one
+        continue;
+      }
+      existing.stop();
+      this.connections.delete(id);
+    }
+    for (const [id, connection] of wanted) {
+      this.connections.set(id, connection);
       connection.start();
     }
     this.logger.log(`Supervising ${this.connections.size} PBX connection(s)`);
   }
 
-  onModuleDestroy(): void {
-    for (const connection of this.connections.values()) connection.stop();
+  /** Reverse-connector gateway hands authenticated tunnels over here. */
+  attachReverseStream(connectionId: string, stream: import('node:stream').Duplex): Promise<void> {
+    const connection = this.connections.get(connectionId);
+    if (!connection) {
+      stream.destroy();
+      return Promise.resolve();
+    }
+    return connection.attachStream(stream);
   }
 
   statuses() {

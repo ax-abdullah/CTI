@@ -2,7 +2,14 @@
 
 Multi-tenant CTI middleware connecting Asterisk/FreePBX to CRMs — click-to-call, screen pops, automated call logging. Design rationale, event model, and roadmap: [cti-architecture.md](./cti-architecture.md).
 
-**Phase 4 status:** Salesforce Open CTI adapter (embedded softphone + Task logging) on top of the Phase-3 stack: multi-tenant core (PostgreSQL registry with encrypted secrets, shared-PBX tenant routing, durable BullMQ delivery, tenant-scoped API keys) + Zoho PhoneBridge adapter.
+**Phase 5 status:** productized. Everything from Phases 1–4 (multi-tenant core, generic webhooks, Zoho PhoneBridge, Salesforce Open CTI softphone) plus: reverse on-prem connector (no inbound firewall holes at the customer), recording proxy with signed URLs, agent presence, and an admin API/dashboard with registry hot-reload.
+
+## Phase 5 additions
+
+- **Reverse connector** — a PBX connection with `mode: reverse` is passive: the customer runs [scripts/connector-agent.mjs](./scripts/connector-agent.mjs) (dependency-free, Node ≥ 21) next to their PBX with `CTI_URL` + `CONNECTOR_TOKEN`; it dials OUT to `wss://cti/connector-ws` and tunnels the local AMI socket. AMI credentials never leave the cloud registry — login happens server-side over the tunnel. Heartbeats (15s ping) reap dead tunnels; the agent owns reconnection with backoff.
+- **Recordings** — `MIXMONITOR_FILENAME` is captured into call state; `call.ended` carries `recordingUrl`, a 15-minute signed capability URL served by `GET /v1/recordings/:token` from `RECORDINGS_BASE_DIR` (basename-only tokens, no traversal). Lab: the Asterisk monitor dir is bind-mounted to `../Multi-Tenant-Asterisk-PBX/recordings`. Fetching recordings *through* the reverse tunnel is deferred.
+- **Presence** — `agent.state` (`RINGING`/`INUSE`/`NOT_INUSE` derived from call lifecycle, `UNAVAILABLE` from AMI `DeviceStateChange`) broadcast to the tenant's softphone sockets and queryable at `GET /v1/agents/state`.
+- **Admin** — `/admin` dashboard (connections, tenants, active calls, queue health) backed by `X-Admin-Key`-guarded endpoints: `GET /admin/overview`, `POST /admin/{pbx-connections,tenants,agents,integrations}` (generated keys/tokens returned exactly once), and `POST /admin/reload` which re-reads the registry and diff-restarts only changed PBX connections.
 
 ## Salesforce Open CTI adapter
 
