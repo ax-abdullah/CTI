@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PbxConnection } from './entities/pbx-connection.entity';
 import { Tenant } from './entities/tenant.entity';
+import { CrmIntegration, CrmType } from './entities/crm-integration.entity';
 import { CryptoService } from './crypto.service';
 
 export interface ResolvedTenant {
@@ -21,10 +22,12 @@ export class TenantRegistryService implements OnModuleInit {
   private connections: PbxConnection[] = [];
   private tenants: ResolvedTenant[] = [];
   private byApiKeyHash = new Map<string, ResolvedTenant>();
+  private integrations: CrmIntegration[] = [];
 
   constructor(
     @InjectRepository(PbxConnection) private readonly connectionRepo: Repository<PbxConnection>,
     @InjectRepository(Tenant) private readonly tenantRepo: Repository<Tenant>,
+    @InjectRepository(CrmIntegration) private readonly integrationRepo: Repository<CrmIntegration>,
     private readonly crypto: CryptoService,
   ) {}
 
@@ -36,9 +39,25 @@ export class TenantRegistryService implements OnModuleInit {
       extensionRegex: new RegExp(entity.extensionPattern),
     }));
     this.byApiKeyHash = new Map(this.tenants.map((t) => [t.entity.apiKeyHash, t]));
+    this.integrations = await this.integrationRepo.find();
     this.logger.log(
-      `Registry loaded: ${this.connections.length} PBX connection(s), ${this.tenants.length} tenant(s)`,
+      `Registry loaded: ${this.connections.length} PBX connection(s), ` +
+        `${this.tenants.length} tenant(s), ${this.integrations.length} CRM integration(s)`,
     );
+  }
+
+  /** Enabled CRM integration of the given type for a tenant, if any. */
+  integrationFor(tenantSlug: string, type: CrmType): CrmIntegration | undefined {
+    const tenant = this.tenantBySlug(tenantSlug);
+    if (!tenant) return undefined;
+    return this.integrations.find(
+      (i) => i.tenantId === tenant.entity.id && i.type === type && i.enabled,
+    );
+  }
+
+  /** Decrypts an integration's secrets blob ({ clientSecret, refreshToken, ... }). */
+  integrationSecrets(integration: CrmIntegration): Record<string, string> {
+    return JSON.parse(this.crypto.decrypt(integration.secretsEnc));
   }
 
   allConnections(): PbxConnection[] {

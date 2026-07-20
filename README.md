@@ -2,7 +2,15 @@
 
 Multi-tenant CTI middleware connecting Asterisk/FreePBX to CRMs — click-to-call, screen pops, automated call logging. Design rationale, event model, and roadmap: [cti-architecture.md](./cti-architecture.md).
 
-**Phase 2 status:** multi-tenant. Tenant registry in PostgreSQL (AES-256-GCM-encrypted PBX/webhook secrets), one supervised AMI connection per PBX shared by N tenants (routed by dialplan context + extension range), durable per-tenant webhook delivery via BullMQ/Redis, tenant-scoped API keys. Zoho PhoneBridge and Salesforce Open CTI adapters come in Phases 3–4.
+**Phase 3 status:** Zoho PhoneBridge adapter on top of the Phase-2 multi-tenant core (PostgreSQL registry with encrypted secrets, shared-PBX tenant routing, durable BullMQ delivery, tenant-scoped API keys). Salesforce Open CTI comes in Phase 4.
+
+## Zoho PhoneBridge adapter
+
+Per-tenant `CrmIntegration` rows (type `zoho`) hold the DC/base URLs/client id in `config` and the client secret, refresh token, and callback token encrypted in `secretsEnc`. Flow:
+
+- **Events out:** normalized `call.*` events for Zoho-enabled tenants are mirrored into a durable `zoho-delivery` queue; the processor exchanges the tenant's refresh token for a cached access token and POSTs RINGING (creates the call → Zoho pops the matched contact for the mapped user) then PUTs ANSWERED/ENDED (Zoho logs the activity). Agent ↔ Zoho user mapping lives in `Agent.crmRefs.zoho`.
+- **Click-to-call in:** Zoho's dial-icon callback POSTs to `/v1/integrations/zoho/:tenantSlug/click-to-call` (`X-Zoho-Token` = per-integration callback token); the Zoho user resolves to an agent extension and a normal agent-leg-first originate follows.
+- **Lab testing:** `node scripts/mock-zoho.mjs 4100` mimics the token + PhoneBridge endpoints; the seed points tenant-a at it. ⚠️ Endpoint paths/payloads follow PhoneBridge v3 shape but must be reconciled with Zoho's partner docs once registration is approved — changes are confined to `zoho-client.ts` + the mock.
 
 ## Run against the lab PBX
 

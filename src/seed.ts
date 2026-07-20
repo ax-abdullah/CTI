@@ -4,6 +4,7 @@ import { randomBytes, createHash, createCipheriv } from 'node:crypto';
 import { PbxConnection } from './tenants/entities/pbx-connection.entity';
 import { Tenant } from './tenants/entities/tenant.entity';
 import { Agent } from './tenants/entities/agent.entity';
+import { CrmIntegration } from './tenants/entities/crm-integration.entity';
 
 /**
  * Seeds the lab setup: one PBX connection (the Docker Asterisk) shared by
@@ -33,11 +34,12 @@ async function main() {
   const ds = new DataSource({
     type: 'postgres',
     url: process.env.DATABASE_URL,
-    entities: [PbxConnection, Tenant, Agent],
+    entities: [PbxConnection, Tenant, Agent, CrmIntegration],
     synchronize: true, // dev only — real migrations before production
   });
   await ds.initialize();
 
+  await ds.getRepository(CrmIntegration).createQueryBuilder().delete().execute();
   await ds.getRepository(Agent).createQueryBuilder().delete().execute();
   await ds.getRepository(Tenant).createQueryBuilder().delete().execute();
   await ds.getRepository(PbxConnection).createQueryBuilder().delete().execute();
@@ -61,9 +63,24 @@ async function main() {
       webhookUrl: 'http://127.0.0.1:4000/cti-events',
       webhookSecret: 'receiver-a-secret',
       agents: [
-        { ext: '1000', displayName: 'A Echo Test' },
-        { ext: '1001', displayName: 'A Agent 1001' },
+        { ext: '1000', displayName: 'A Echo Test', crmRefs: { zoho: 'zuid-1000' } },
+        { ext: '1001', displayName: 'A Agent 1001', crmRefs: { zoho: 'zuid-1001' } },
       ],
+      // Mock Zoho in the lab; production would be accounts.zoho.sa /
+      // phonebridge.zoho.sa with the real client credentials + refresh token.
+      zoho: {
+        config: {
+          dc: 'sa',
+          accountsBaseUrl: process.env.SEED_ZOHO_ACCOUNTS_URL ?? 'http://127.0.0.1:4100',
+          apiBaseUrl: process.env.SEED_ZOHO_API_URL ?? 'http://127.0.0.1:4100/phonebridge/v3',
+          clientId: 'mock-client-id',
+        },
+        secrets: {
+          clientSecret: 'mock-client-secret',
+          refreshToken: 'mock-refresh-token',
+          callbackToken: 'zoho-callback-token-a',
+        },
+      },
     },
     {
       slug: 'tenant-b',
@@ -75,9 +92,10 @@ async function main() {
       webhookUrl: 'http://127.0.0.1:4001/cti-events',
       webhookSecret: 'receiver-b-secret',
       agents: [
-        { ext: '2000', displayName: 'B Echo Test' },
-        { ext: '2001', displayName: 'B Agent 2001' },
+        { ext: '2000', displayName: 'B Echo Test', crmRefs: {} },
+        { ext: '2001', displayName: 'B Agent 2001', crmRefs: {} },
       ],
+      zoho: undefined, // tenant-b has no CRM — webhooks only
     },
   ];
 
@@ -96,7 +114,16 @@ async function main() {
       webhookSecretEnc: encrypt(key, spec.webhookSecret),
     });
     for (const agent of spec.agents) {
-      await ds.getRepository(Agent).save({ tenantId: tenant.id, ...agent, crmRefs: {} });
+      await ds.getRepository(Agent).save({ tenantId: tenant.id, ...agent });
+    }
+    if (spec.zoho) {
+      await ds.getRepository(CrmIntegration).save({
+        tenantId: tenant.id,
+        type: 'zoho',
+        enabled: true,
+        config: spec.zoho.config,
+        secretsEnc: encrypt(key, JSON.stringify(spec.zoho.secrets)),
+      });
     }
     console.log(`${spec.slug} API key (shown once): ${apiKey}`);
   }

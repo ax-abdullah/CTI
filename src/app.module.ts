@@ -7,6 +7,7 @@ import { TenantsModule } from './tenants/tenants.module';
 import { PbxConnectorModule } from './pbx-connector/pbx-connector.module';
 import { CallStateModule } from './call-state/call-state.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
+import { ZohoModule } from './crm-adapters/zoho/zoho.module';
 import { ApiModule } from './api/api.module';
 
 @Module({
@@ -35,6 +36,7 @@ import { ApiModule } from './api/api.module';
     PbxConnectorModule,
     CallStateModule,
     WebhooksModule,
+    ZohoModule,
     ApiModule,
   ],
 })
