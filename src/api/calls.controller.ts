@@ -7,6 +7,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { PbxSupervisorService } from '../pbx-connector/pbx-supervisor.service';
 import { CallStateService } from '../call-state/call-state.service';
 import { PresenceService } from '../presence/presence.service';
@@ -22,6 +23,8 @@ export class CallsController {
     private readonly presence: PresenceService,
   ) {}
 
+  @ApiTags('Health')
+  @ApiOperation({ summary: 'Liveness + per-PBX-connection state (no auth)' })
   @Get('health')
   health() {
     const connections = this.supervisor.statuses();
@@ -31,6 +34,14 @@ export class CallsController {
     };
   }
 
+  @ApiTags('Tenant API')
+  @ApiSecurity('tenant-key')
+  @ApiOperation({
+    summary: 'Click-to-call (agent-leg-first originate)',
+    description:
+      "Rings the agent's phone first; when answered, the PBX dials the destination. " +
+      'Returns a callRef that reappears on the resulting call.* events.',
+  })
   @UseGuards(TenantApiKeyGuard)
   @Post('v1/calls/originate')
   async originate(@Req() req: { tenant: ResolvedTenant }, @Body() dto: OriginateDto) {
@@ -45,12 +56,18 @@ export class CallsController {
     return { status: 'originating', callRef, agentExt: dto.agentExt, number: dto.number };
   }
 
+  @ApiTags('Tenant API')
+  @ApiSecurity('tenant-key')
+  @ApiOperation({ summary: "Snapshot of the tenant's in-flight calls" })
   @UseGuards(TenantApiKeyGuard)
   @Get('v1/calls')
   activeCalls(@Req() req: { tenant: ResolvedTenant }) {
     return { calls: this.callState.activeCalls(req.tenant.entity.slug) };
   }
 
+  @ApiTags('Tenant API')
+  @ApiSecurity('tenant-key')
+  @ApiOperation({ summary: 'Current presence of every agent in the tenant' })
   @UseGuards(TenantApiKeyGuard)
   @Get('v1/agents/state')
   agentStates(@Req() req: { tenant: ResolvedTenant }) {

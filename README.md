@@ -2,6 +2,17 @@
 
 Multi-tenant CTI middleware connecting Asterisk/FreePBX to CRMs — click-to-call, screen pops, automated call logging. Design rationale, event model, and roadmap: [cti-architecture.md](./cti-architecture.md).
 
+## Documentation
+
+| Doc | What's in it |
+|---|---|
+| [docs/INSTALL.md](./docs/INSTALL.md) | Step-by-step installation: infra, env, PBX prep (lab + production FreePBX), onboarding, reverse connector, production checklist |
+| [docs/FEATURES.md](./docs/FEATURES.md) | Catalog of all 14 features with how each works and its endpoints |
+| **`/docs` (Swagger UI)** | Live, interactive API reference with all four auth schemes — served by the running app |
+| [docs/postman/](./docs/postman/CTI-Platform.postman_collection.json) | Postman collection: every endpoint with request + example responses |
+| [docs/adr/](./docs/adr/README.md) | Architecture Decision Records (AMI-over-ARI, correlation engine, multi-tenancy, reverse connector, …) |
+| [cti-architecture.md](./cti-architecture.md) | The original knowledge + architecture document with sequence diagrams |
+
 **Phase 5 status:** productized. Everything from Phases 1–4 (multi-tenant core, generic webhooks, Zoho PhoneBridge, Salesforce Open CTI softphone) plus: reverse on-prem connector (no inbound firewall holes at the customer), recording proxy with signed URLs, agent presence, and an admin API/dashboard with registry hot-reload.
 
 ## Phase 5 additions

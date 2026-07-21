@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { ApiExcludeEndpoint, ApiOperation, ApiProperty, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { IsString, Matches } from 'class-validator';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -20,12 +21,14 @@ import { ResolvedTenant, TenantRegistryService } from '../tenants/tenant-registr
 import { signAgentToken, verifyAgentToken } from './agent-token.util';
 
 class AgentLoginDto {
+  @ApiProperty({ description: 'Agent extension within the calling tenant', example: '1001' })
   @IsString()
   @Matches(/^\d{3,6}$/)
   ext: string;
 }
 
 class SoftphoneDialDto {
+  @ApiProperty({ description: 'Number to dial', example: '+966501234567' })
   @IsString()
   @Matches(/^\+?\d{3,15}$/, { message: 'number must be digits with optional leading +' })
   number: string;
@@ -46,6 +49,14 @@ export class SoftphoneController {
    * embedded flow the softphone page obtains it from the hosting app's
    * backend; agent-credential SSO is a Phase 5 concern.
    */
+  @ApiTags('Softphone')
+  @ApiSecurity('tenant-key')
+  @ApiOperation({
+    summary: 'Issue an agent session token',
+    description:
+      'Returns a short-lived HS256 token identifying (tenant, extension). Used as the Bearer ' +
+      'token for /v1/softphone/originate and as ?token= on the /softphone-ws WebSocket.',
+  })
   @UseGuards(TenantApiKeyGuard)
   @Post('v1/softphone/login')
   login(@Req() req: { tenant: ResolvedTenant }, @Body() dto: AgentLoginDto) {
@@ -64,6 +75,9 @@ export class SoftphoneController {
   }
 
   /** Click-to-dial from the softphone page (Open CTI onClickToDial). */
+  @ApiTags('Softphone')
+  @ApiSecurity('agent-token')
+  @ApiOperation({ summary: "Click-to-dial as the token's agent (agent leg rings first)" })
   @Post('v1/softphone/originate')
   async originate(
     @Headers('authorization') authorization: string | undefined,
@@ -80,6 +94,7 @@ export class SoftphoneController {
   }
 
   /** The softphone page Salesforce embeds (see callcenter-definition.xml). */
+  @ApiExcludeEndpoint()
   @Get('softphone')
   @Header('Content-Type', 'text/html; charset=utf-8')
   page(): string {
@@ -87,6 +102,7 @@ export class SoftphoneController {
   }
 
   /** Call Center definition template for the Salesforce admin to import. */
+  @ApiExcludeEndpoint()
   @Get('softphone/callcenter-definition.xml')
   @Header('Content-Type', 'application/xml; charset=utf-8')
   callCenterXml(): string {

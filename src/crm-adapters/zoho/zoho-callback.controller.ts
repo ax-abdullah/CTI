@@ -9,15 +9,17 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { timingSafeEqual } from 'node:crypto';
+import { ApiOperation, ApiParam, ApiProperty, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { IsString, Matches } from 'class-validator';
 import { TenantRegistryService } from '../../tenants/tenant-registry.service';
 import { PbxSupervisorService } from '../../pbx-connector/pbx-supervisor.service';
 
 class ZohoClickToCallDto {
-  /** The Zoho user who clicked the dial icon. */
+  @ApiProperty({ description: 'The Zoho user who clicked the dial icon', example: 'zuid-1001' })
   @IsString()
   zohoUserId: string;
 
+  @ApiProperty({ description: 'Number Zoho asked us to dial', example: '+966501234567' })
   @IsString()
   @Matches(/^\+?\d{3,15}$/, { message: 'number must be digits with optional leading +' })
   number: string;
@@ -38,6 +40,15 @@ export class ZohoCallbackController {
     private readonly supervisor: PbxSupervisorService,
   ) {}
 
+  @ApiTags('Zoho integration')
+  @ApiSecurity('zoho-callback-token')
+  @ApiParam({ name: 'tenantSlug', example: 'tenant-a' })
+  @ApiOperation({
+    summary: "Zoho click-to-call callback (Zoho's dial icon lands here)",
+    description:
+      'Registered as the click-to-call URL of the PhoneBridge integration. Maps the Zoho user ' +
+      'to an agent extension (Agent.crmRefs.zoho) and performs an agent-leg-first originate.',
+  })
   @Post(':tenantSlug/click-to-call')
   async clickToCall(
     @Param('tenantSlug') tenantSlug: string,
