@@ -9,7 +9,7 @@ The platform is feature-complete but **not yet production-safe**: zero automated
 | Phase | Track | Scope | Exit criterion |
 |---|---|---|---|
 | **6 — Test suite & CI + migrations** ✅ | Hardening | Jest/supertest unit + integration tests; TypeORM migrations replacing `synchronize`; GitHub Actions | **Done** — 30 tests green; `migration:run` provisions a clean DB |
-| **7 — Reliability & correctness** | Hardening | Call-state in Redis (TTL); `CoreShowChannels` resync on reconnect; rate-limit originate; graceful shutdown | App restart loses no in-flight calls; originate rate-limited per tenant |
+| **7 — Reliability & correctness** ✅ | Hardening | Call-state in Redis (TTL); `CoreShowChannels` resync on reconnect; rate-limit originate; graceful shutdown | **Done** — verified live: SIGKILL mid-call → resync recovers → `call.ended` still fires; originate 429 after per-tenant limit |
 | **8 — Observability & operations** | Hardening | Structured logs; Prometheus `/metrics`; readiness/liveness probes; dead-letter alerting + retry UI | Metrics scrapeable; a failed CRM delivery alerts and is retryable from the UI |
 | **9 — Secure deployment & real CRM go-live** | Hardening | TLS/`wss`; containerization; KMS secrets; real Zoho/Salesforce orgs; recordings over the tunnel | A real customer FreePBX + real Zoho/SF org over TLS, no inbound holes |
 | **10 — WebRTC softphone + more CRMs** | Expansion | In-browser audio (PJSIP WebRTC + SIP.js); HubSpot + Dynamics adapters | Agent places/receives a call in the browser; HubSpot pop + log works |
@@ -30,16 +30,16 @@ Zero automated tests existed; every phase was verified by hand against the lab P
 
 **Exit:** green CI on PRs; a fresh database is provisioned by `migration:run` alone.
 
-### Phase 7 — Reliability & correctness
+### Phase 7 — Reliability & correctness ✅ Done
 
-The correlation engine keeps call-state in in-memory `Map`s, so a restart drops in-flight calls and the app can only run as a single instance.
+The correlation engine kept call-state in in-memory `Map`s, so a restart dropped in-flight calls and pinned the app to one instance. Delivered:
 
-- **Call-state in Redis** with a TTL ([src/call-state/call-state.service.ts](../src/call-state/call-state.service.ts); `ioredis` is already a dependency) — survives restarts and unlocks horizontal scaling.
-- **`CoreShowChannels` resync** on every (re)connect to rebuild in-flight calls from the PBX's own view — the mitigation named in [ADR-0003](./adr/0003-linkedid-correlation-normalized-events.md); hook into the reconnect path in [supervised-connection.ts](../src/pbx-connector/supervised-connection.ts).
-- **Rate-limit** `/v1/calls/originate` and `/v1/softphone/originate` per tenant via `@nestjs/throttler` — originate makes phones ring, so it's an abuse vector.
-- **Graceful shutdown:** drain BullMQ workers and close AMI connections cleanly on SIGTERM.
+- **Redis-backed write-through call-state** — a shared `ioredis` client (`RedisModule`); each mutation persists `call:{conn}:{linkedid}` (SET EX 6h, DEL on finalize); `activeCalls()` reads cluster-wide via SCAN, so Redis is the durable source of truth.
+- **`CoreShowChannels` resync** on every (re)connect ([resync.service.ts](../src/pbx-connector/resync.service.ts) via the `pbx.connected` event + `AmiClient.sendEventAction`): a pure `reconcile()` finalizes calls the PBX no longer shows, keeps still-live ones, and synthesizes calls started during downtime — ADR-0003's named mitigation.
+- **Per-principal rate-limit** on both originate endpoints (`@nestjs/throttler`, Redis storage; `CtiThrottlerGuard` keys by tenant API key / agent token) — configurable via `ORIGINATE_RATE_LIMIT` / `ORIGINATE_RATE_TTL_SEC`.
+- **Graceful shutdown** (`enableShutdownHooks`): AMI sockets, BullMQ workers, Redis, and pending finalize timers all close cleanly on SIGTERM.
 
-**Exit:** an app restart mid-call loses no in-flight state; originate is rate-limited per tenant.
+**Verified live:** a call was SIGKILL'd mid-flight, its state survived in Redis, resync recovered it on restart (`kept 2`), and `call.ended` still fired with the original callRef/duration on hangup; originate returned 429 after the per-tenant limit; SIGTERM exited cleanly in ~2s. 41 tests green.
 
 ### Phase 8 — Observability & operations
 

@@ -29,6 +29,10 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.useWebSocketAdapter(new WsAdapter(app));
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  // SIGTERM/SIGINT run every module's shutdown hook: AMI sockets close, BullMQ
+  // workers drain, Redis/PG disconnect, and pending finalize timers are cleared
+  // (call-state is already persisted, so nothing in flight is lost).
+  app.enableShutdownHooks();
   mountSwagger(app);
   const port = Number(process.env.PORT ?? 3000);
   await app.listen(port);

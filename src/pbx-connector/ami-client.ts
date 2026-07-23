@@ -95,6 +95,44 @@ export class AmiClient extends EventEmitter {
     });
   }
 
+  /**
+   * Sends an action whose reply is a stream of events (e.g. CoreShowChannels
+   * → many CoreShowChannel events, then CoreShowChannelsComplete). Collects
+   * every event carrying this action's ActionID until `completeEvent`, and
+   * returns them (the terminating event excluded).
+   */
+  async sendEventAction(action: AmiMessage, completeEvent: string): Promise<AmiMessage[]> {
+    const socket = this.socket;
+    if (!socket || socket.destroyed) throw new Error('AMI not connected');
+    const actionId = randomUUID();
+    const collected: AmiMessage[] = [];
+
+    return new Promise<AmiMessage[]>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.off('event', onEvent);
+        reject(new Error(`AMI action ${action.Action} timed out`));
+      }, this.opts.actionTimeoutMs ?? 10_000);
+
+      const onEvent = (msg: AmiMessage) => {
+        if (msg.ActionID !== actionId) return;
+        if (msg.Event === completeEvent) {
+          clearTimeout(timer);
+          this.off('event', onEvent);
+          resolve(collected);
+        } else {
+          collected.push(msg);
+        }
+      };
+      this.on('event', onEvent);
+
+      const frame =
+        Object.entries({ ...action, ActionID: actionId })
+          .map(([k, v]) => `${k}: ${v}`)
+          .join('\r\n') + '\r\n\r\n';
+      socket.write(frame);
+    });
+  }
+
   destroy(): void {
     this.socket?.destroy();
   }

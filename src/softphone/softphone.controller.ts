@@ -16,6 +16,7 @@ import { IsString, Matches } from 'class-validator';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { TenantApiKeyGuard } from '../api/api-key.guard';
+import { CtiThrottlerGuard } from '../api/cti-throttler.guard';
 import { PbxSupervisorService } from '../pbx-connector/pbx-supervisor.service';
 import { ResolvedTenant, TenantRegistryService } from '../tenants/tenant-registry.service';
 import { signAgentToken, verifyAgentToken } from './agent-token.util';
@@ -78,6 +79,7 @@ export class SoftphoneController {
   @ApiTags('Softphone')
   @ApiSecurity('agent-token')
   @ApiOperation({ summary: "Click-to-dial as the token's agent (agent leg rings first)" })
+  @UseGuards(CtiThrottlerGuard)
   @Post('v1/softphone/originate')
   async originate(
     @Headers('authorization') authorization: string | undefined,

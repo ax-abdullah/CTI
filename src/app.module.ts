@@ -2,7 +2,10 @@ import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { RedisModule, REDIS_CLIENT } from './redis/redis.module';
 import { TenantsModule } from './tenants/tenants.module';
 import { PbxConnectorModule } from './pbx-connector/pbx-connector.module';
 import { CallStateModule } from './call-state/call-state.module';
@@ -39,6 +42,22 @@ import { ApiModule } from './api/api.module';
         },
       }),
     }),
+    // Default throttler == the originate limit; applied only where the
+    // CtiThrottlerGuard is used (the two originate endpoints). Redis-backed
+    // so limits are correct across instances.
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService, REDIS_CLIENT],
+      useFactory: (config: ConfigService, redis: any) => ({
+        throttlers: [
+          {
+            ttl: Number(config.get('ORIGINATE_RATE_TTL_SEC', '60')) * 1000,
+            limit: Number(config.get('ORIGINATE_RATE_LIMIT', '30')),
+          },
+        ],
+        storage: new ThrottlerStorageRedisService(redis),
+      }),
+    }),
+    RedisModule,
     TenantsModule,
     PbxConnectorModule,
     CallStateModule,

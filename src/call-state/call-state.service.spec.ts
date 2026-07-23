@@ -28,15 +28,31 @@ function fakeRegistry(tenant: ResolvedTenant): TenantRegistryService {
 
 const noRecordings = { signedUrlFor: () => undefined } as unknown as RecordingsService;
 
+/** In-memory Redis stub covering set/del/scan/mget used by CallStateService. */
+function fakeRedis() {
+  const store = new Map<string, string>();
+  return {
+    store,
+    set: async (k: string, v: string) => void store.set(k, v),
+    del: async (k: string) => void store.delete(k),
+    scan: async (_cursor: string, _m: string, pattern: string) => {
+      const rx = new RegExp('^' + pattern.replace('*', '.*') + '$');
+      return ['0', [...store.keys()].filter((k) => rx.test(k))];
+    },
+    mget: async (keys: string[]) => keys.map((k) => store.get(k) ?? null),
+  };
+}
+
 function newService(registry: TenantRegistryService) {
   const bus = new EventEmitter2({ wildcard: true, delimiter: '.' });
   const events: { type: string; payload: any }[] = [];
   for (const type of Object.values(CALL_EVENTS)) {
     bus.on(type, (payload) => events.push({ type, payload }));
   }
-  const svc = new CallStateService(registry, noRecordings, bus);
+  const redis = fakeRedis();
+  const svc = new CallStateService(registry, noRecordings, bus, redis as any);
   const feed = (msg: AmiMessage) => svc.handleAmiEvent({ connectionId: CONN, msg });
-  return { svc, events, feed };
+  return { svc, events, feed, redis };
 }
 
 describe('CallStateService correlation', () => {

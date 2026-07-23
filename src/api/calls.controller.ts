@@ -13,6 +13,7 @@ import { CallStateService } from '../call-state/call-state.service';
 import { PresenceService } from '../presence/presence.service';
 import { ResolvedTenant } from '../tenants/tenant-registry.service';
 import { TenantApiKeyGuard } from './api-key.guard';
+import { CtiThrottlerGuard } from './cti-throttler.guard';
 import { OriginateDto } from './originate.dto';
 
 @Controller()
@@ -42,7 +43,7 @@ export class CallsController {
       "Rings the agent's phone first; when answered, the PBX dials the destination. " +
       'Returns a callRef that reappears on the resulting call.* events.',
   })
-  @UseGuards(TenantApiKeyGuard)
+  @UseGuards(TenantApiKeyGuard, CtiThrottlerGuard)
   @Post('v1/calls/originate')
   async originate(@Req() req: { tenant: ResolvedTenant }, @Body() dto: OriginateDto) {
     const tenant = req.tenant;
@@ -61,8 +62,8 @@ export class CallsController {
   @ApiOperation({ summary: "Snapshot of the tenant's in-flight calls" })
   @UseGuards(TenantApiKeyGuard)
   @Get('v1/calls')
-  activeCalls(@Req() req: { tenant: ResolvedTenant }) {
-    return { calls: this.callState.activeCalls(req.tenant.entity.slug) };
+  async activeCalls(@Req() req: { tenant: ResolvedTenant }) {
+    return { calls: await this.callState.activeCalls(req.tenant.entity.slug) };
   }
 
   @ApiTags('Tenant API')

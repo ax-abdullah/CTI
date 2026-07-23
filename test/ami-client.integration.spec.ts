@@ -47,6 +47,16 @@ class MockAmi {
       );
     } else if (fields.Action === 'Ping') {
       socket.write(`Response: Success\r\nActionID: ${actionId}\r\nPing: Pong\r\n\r\n`);
+    } else if (fields.Action === 'CoreShowChannels') {
+      // Response, then a stream of CoreShowChannel events, then Complete.
+      socket.write(`Response: Success\r\nActionID: ${actionId}\r\nEventList: start\r\nMessage: Channels will follow\r\n\r\n`);
+      for (const ch of ['PJSIP/1001-01', 'PJSIP/1002-02']) {
+        socket.write(
+          `Event: CoreShowChannel\r\nActionID: ${actionId}\r\nChannel: ${ch}\r\n` +
+            `Uniqueid: ${ch.slice(-2)}\r\nLinkedid: 01\r\nChannelStateDesc: Up\r\nDuration: 00:00:12\r\n\r\n`,
+        );
+      }
+      socket.write(`Event: CoreShowChannelsComplete\r\nActionID: ${actionId}\r\nEventList: Complete\r\nListItems: 2\r\n\r\n`);
     }
   }
 
@@ -108,6 +118,19 @@ describe('AmiClient (integration)', () => {
     });
     expect(event.Event).toBe('Newchannel');
     expect(event.Channel).toBe('PJSIP/1001-00000001');
+    client.destroy();
+  });
+
+  it('collects a multi-event action (CoreShowChannels) via sendEventAction', async () => {
+    mock = new MockAmi();
+    await mock.start();
+    const client = new AmiClient({ host: '127.0.0.1', port: mock.port, username: 'cti', secret: 's' });
+    await client.connect();
+
+    const channels = await client.sendEventAction({ Action: 'CoreShowChannels' }, 'CoreShowChannelsComplete');
+    expect(channels).toHaveLength(2);
+    expect(channels.every((c) => c.Event === 'CoreShowChannel')).toBe(true);
+    expect(channels[0].Linkedid).toBe('01');
     client.destroy();
   });
 

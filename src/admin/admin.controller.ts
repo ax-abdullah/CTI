@@ -79,7 +79,7 @@ export class AdminController {
         webhookUrl: t.webhookUrl,
         integrations: integrations.filter((i) => i.tenantId === t.id).map((i) => i.type),
       })),
-      activeCalls: this.callState.activeCalls(),
+      activeCalls: await this.callState.activeCalls(),
       queues: { webhook, zoho, salesforce },
     };
   }

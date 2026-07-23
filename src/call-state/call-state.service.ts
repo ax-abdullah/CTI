@@ -1,6 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BeforeApplicationShutdown, Inject, Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
+import type { Redis } from 'ioredis';
 import { AmiMessage } from '../pbx-connector/ami-client';
+import { REDIS_CLIENT } from '../redis/redis.module';
 import { TenantRegistryService, ResolvedTenant } from '../tenants/tenant-registry.service';
 import { RecordingsService } from '../recordings/recordings.service';
 import { CALL_EVENTS, CallDirection, CallEndedEvent } from './normalized-events';
@@ -13,6 +15,25 @@ interface TrackedChannel {
   isLocal: boolean;
   endpoint?: string;
   hungUp: boolean;
+}
+
+/** JSON-safe projection of a CallRecord for Redis (no Map, Dates, timers). */
+interface CallSnapshot {
+  callId: string;
+  connectionId: string;
+  tenantSlug?: string;
+  direction?: CallDirection;
+  agentExt?: string;
+  remoteNumber?: string;
+  remoteName?: string;
+  callRef?: string;
+  recordingPath?: string;
+  startedAt: string;
+  answeredAt?: string;
+  ringingEmitted: boolean;
+  answeredEmitted: boolean;
+  lastDialStatus?: string;
+  channels: TrackedChannel[];
 }
 
 interface CallRecord {
@@ -48,30 +69,44 @@ interface CallRecord {
  * finalize (never delivered cross-tenant).
  */
 @Injectable()
-export class CallStateService {
+export class CallStateService implements BeforeApplicationShutdown {
   private readonly logger = new Logger(CallStateService.name);
   private readonly calls = new Map<string, CallRecord>();
   private readonly finalizeGraceMs = 1_500;
+  private readonly ttlSec = 6 * 3600;
 
   constructor(
     private readonly registry: TenantRegistryService,
     private readonly recordings: RecordingsService,
     private readonly bus: EventEmitter2,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
-  activeCalls(tenantSlug?: string) {
-    return [...this.calls.values()]
-      .filter((c) => !tenantSlug || c.tenant?.entity.slug === tenantSlug)
-      .map((c) => ({
-        callId: c.callId,
-        tenant: c.tenant?.entity.slug,
-        direction: c.direction,
-        agentExt: c.agentExt,
-        remoteNumber: c.remoteNumber,
-        state: c.answeredEmitted ? 'answered' : 'ringing',
-        startedAt: c.startedAt.toISOString(),
-        channels: [...c.channels.values()].map((ch) => ch.name),
+  /**
+   * Cluster-wide read from Redis (the durable source of truth), so /v1/calls
+   * and /admin/overview stay correct after a restart and across instances.
+   */
+  async activeCalls(tenantSlug?: string) {
+    const snapshots = await this.scanSnapshots();
+    return snapshots
+      .filter((s) => !tenantSlug || s.tenantSlug === tenantSlug)
+      .map((s) => ({
+        callId: s.callId,
+        tenant: s.tenantSlug,
+        direction: s.direction,
+        agentExt: s.agentExt,
+        remoteNumber: s.remoteNumber,
+        state: s.answeredEmitted ? 'answered' : 'ringing',
+        startedAt: s.startedAt,
+        channels: s.channels.map((ch) => ch.name),
       }));
+  }
+
+  /** Persisted state survives restarts, so pending timers can be dropped. */
+  beforeApplicationShutdown(): void {
+    for (const call of this.calls.values()) {
+      if (call.finalizeTimer) clearTimeout(call.finalizeTimer);
+    }
   }
 
   @OnEvent('ami.event')
@@ -120,6 +155,7 @@ export class CallStateService {
     call.channels.set(msg.Uniqueid, this.trackChannel(msg));
     this.tryResolveTenant(call);
     this.tryEmitRinging(call);
+    this.persist(call);
   }
 
   private onDialBegin(connectionId: string, msg: AmiMessage): void {
@@ -133,6 +169,7 @@ export class CallStateService {
     }
     this.tryResolveTenant(call);
     this.tryEmitRinging(call);
+    this.persist(call);
   }
 
   private onDialEnd(connectionId: string, msg: AmiMessage): void {
@@ -140,6 +177,7 @@ export class CallStateService {
     if (!call) return;
     call.lastDialStatus = msg.DialStatus;
     if (msg.DialStatus === 'ANSWER') this.markAnswered(call);
+    this.persist(call);
   }
 
   /**
@@ -154,13 +192,17 @@ export class CallStateService {
       call.direction = 'outbound';
     } else if (msg.Variable === 'MIXMONITOR_FILENAME' && msg.Value) {
       call.recordingPath = msg.Value;
+    } else {
+      return; // uninteresting variable — don't churn Redis
     }
+    this.persist(call);
   }
 
   private markAnswered(call?: CallRecord): void {
     if (!call || call.answeredEmitted) return;
     call.answeredEmitted = true;
     call.answeredAt = new Date();
+    this.persist(call);
     if (!call.tenant) return;
     this.bus.emit(CALL_EVENTS.answered, {
       callId: call.callId,
@@ -174,6 +216,7 @@ export class CallStateService {
     if (!call) return;
     const channel = msg.Uniqueid ? call.channels.get(msg.Uniqueid) : undefined;
     if (channel) channel.hungUp = true;
+    this.persist(call);
 
     if (![...call.channels.values()].every((c) => c.hungUp)) return;
     if (call.finalizeTimer) clearTimeout(call.finalizeTimer);
@@ -186,6 +229,7 @@ export class CallStateService {
 
     call.endedEmitted = true;
     this.calls.delete(call.key);
+    this.forget(call);
 
     if (!call.tenant) {
       this.logger.warn(`Call ${call.callId} matched no tenant on connection ${call.connectionId}; dropped`);
@@ -312,5 +356,162 @@ export class CallStateService {
     if (call.lastDialStatus === 'BUSY') return 'BUSY';
     if (call.lastDialStatus === 'NOANSWER' || call.lastDialStatus === 'CANCEL') return 'NO ANSWER';
     return 'FAILED';
+  }
+
+  // ------------------------------------------------------ Redis persistence
+
+  private redisKey(connectionId: string, callId: string): string {
+    return `call:${connectionId}:${callId}`;
+  }
+
+  /** Write-through: snapshot captured synchronously, SET fired async. */
+  private persist(call: CallRecord): void {
+    if (call.endedEmitted) return;
+    const json = JSON.stringify(this.toSnapshot(call));
+    this.redis
+      .set(this.redisKey(call.connectionId, call.callId), json, 'EX', this.ttlSec)
+      .catch((e) => this.logger.warn(`persist ${call.key} failed: ${(e as Error).message}`));
+  }
+
+  private forget(call: CallRecord): void {
+    this.redis
+      .del(this.redisKey(call.connectionId, call.callId))
+      .catch((e) => this.logger.warn(`forget ${call.key} failed: ${(e as Error).message}`));
+  }
+
+  private toSnapshot(call: CallRecord): CallSnapshot {
+    return {
+      callId: call.callId,
+      connectionId: call.connectionId,
+      tenantSlug: call.tenant?.entity.slug,
+      direction: call.direction,
+      agentExt: call.agentExt,
+      remoteNumber: call.remoteNumber,
+      remoteName: call.remoteName,
+      callRef: call.callRef,
+      recordingPath: call.recordingPath,
+      startedAt: call.startedAt.toISOString(),
+      answeredAt: call.answeredAt?.toISOString(),
+      ringingEmitted: call.ringingEmitted,
+      answeredEmitted: call.answeredEmitted,
+      lastDialStatus: call.lastDialStatus,
+      channels: [...call.channels.values()],
+    };
+  }
+
+  private fromSnapshot(snap: CallSnapshot): CallRecord {
+    return {
+      key: `${snap.connectionId}:${snap.callId}`,
+      callId: snap.callId,
+      connectionId: snap.connectionId,
+      tenant: snap.tenantSlug ? this.registry.tenantBySlug(snap.tenantSlug) : undefined,
+      channels: new Map(snap.channels.map((c) => [c.uniqueid, c])),
+      direction: snap.direction,
+      agentExt: snap.agentExt,
+      remoteNumber: snap.remoteNumber,
+      remoteName: snap.remoteName,
+      callRef: snap.callRef,
+      recordingPath: snap.recordingPath,
+      startedAt: new Date(snap.startedAt),
+      answeredAt: snap.answeredAt ? new Date(snap.answeredAt) : undefined,
+      ringingEmitted: snap.ringingEmitted,
+      answeredEmitted: snap.answeredEmitted,
+      endedEmitted: false,
+    };
+  }
+
+  private async scanKeys(pattern: string): Promise<string[]> {
+    const keys: string[] = [];
+    let cursor = '0';
+    do {
+      const [next, batch] = await this.redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200);
+      keys.push(...batch);
+      cursor = next;
+    } while (cursor !== '0');
+    return keys;
+  }
+
+  private async scanSnapshots(pattern = 'call:*'): Promise<CallSnapshot[]> {
+    const keys = await this.scanKeys(pattern);
+    if (!keys.length) return [];
+    const values = await this.redis.mget(keys);
+    const out: CallSnapshot[] = [];
+    for (const v of values) {
+      if (!v) continue;
+      try {
+        out.push(JSON.parse(v) as CallSnapshot);
+      } catch {
+        /* skip corrupt entry */
+      }
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------- resync support (§2)
+
+  /** Rehydrate persisted calls for a connection into memory; returns them. */
+  async loadPersisted(connectionId: string): Promise<CallRecord[]> {
+    const snaps = await this.scanSnapshots(`call:${connectionId}:*`);
+    const records: CallRecord[] = [];
+    for (const snap of snaps) {
+      const record = this.fromSnapshot(snap);
+      this.calls.set(record.key, record);
+      records.push(record);
+    }
+    return records;
+  }
+
+  has(connectionId: string, callId: string): boolean {
+    return this.calls.has(`${connectionId}:${callId}`);
+  }
+
+  /** Force a terminal call.ended now (a call the PBX no longer shows live). */
+  finalizeNow(connectionId: string, callId: string): void {
+    const call = this.calls.get(`${connectionId}:${callId}`);
+    if (!call) return;
+    for (const ch of call.channels.values()) ch.hungUp = true;
+    if (call.finalizeTimer) clearTimeout(call.finalizeTimer);
+    this.finalize(call);
+  }
+
+  /** Mark a kept call's departed legs hung up; finalize if all are gone. */
+  reconcileChannels(connectionId: string, callId: string, liveUniqueids: Set<string>): void {
+    const call = this.calls.get(`${connectionId}:${callId}`);
+    if (!call) return;
+    for (const ch of call.channels.values()) {
+      if (!liveUniqueids.has(ch.uniqueid)) ch.hungUp = true;
+    }
+    if ([...call.channels.values()].every((c) => c.hungUp)) this.finalizeNow(connectionId, callId);
+    else this.persist(call);
+  }
+
+  /**
+   * Create a minimal record for a call the PBX shows live but we never
+   * persisted (started during downtime). We don't re-emit ringing/answered
+   * for a call already in progress — we only ensure its eventual Hangup
+   * produces a call.ended for CRM logging.
+   */
+  synthesize(
+    connectionId: string,
+    callId: string,
+    channels: TrackedChannel[],
+    opts: { answered: boolean; startedAt: Date },
+  ): void {
+    const key = `${connectionId}:${callId}`;
+    if (this.calls.has(key)) return;
+    const call: CallRecord = {
+      key,
+      callId,
+      connectionId,
+      channels: new Map(channels.map((c) => [c.uniqueid, c])),
+      startedAt: opts.startedAt,
+      answeredAt: opts.answered ? new Date() : undefined,
+      ringingEmitted: true,
+      answeredEmitted: opts.answered,
+      endedEmitted: false,
+    };
+    this.tryResolveTenant(call);
+    this.calls.set(key, call);
+    this.persist(call);
   }
 }

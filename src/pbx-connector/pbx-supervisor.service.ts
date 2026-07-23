@@ -80,6 +80,13 @@ export class PbxSupervisorService implements OnModuleInit, OnModuleDestroy {
     return [...this.connections.values()].map((c) => c.status());
   }
 
+  /** Live channel list from a connection (for resync on reconnect). */
+  async showChannels(connectionId: string): Promise<import('./ami-client').AmiMessage[]> {
+    const connection = this.connections.get(connectionId);
+    if (!connection) return [];
+    return connection.sendEventAction({ Action: 'CoreShowChannels' }, 'CoreShowChannelsComplete');
+  }
+
   /** Click-to-call for a tenant: agent-leg-first on the tenant's PBX. */
   async originate(tenant: ResolvedTenant, agentExt: string, number: string): Promise<{ callRef: string }> {
     const connection = this.connections.get(tenant.entity.pbxConnectionId);

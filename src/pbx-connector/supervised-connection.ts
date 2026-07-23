@@ -82,6 +82,13 @@ export class SupervisedConnection {
     return this.client.sendAction(action);
   }
 
+  async sendEventAction(action: AmiMessage, completeEvent: string): Promise<AmiMessage[]> {
+    if (!this.client || !this.connected) {
+      throw new Error(`PBX connection '${this.target.name}' is down`);
+    }
+    return this.client.sendEventAction(action, completeEvent);
+  }
+
   status() {
     return {
       connectionId: this.target.connectionId,
