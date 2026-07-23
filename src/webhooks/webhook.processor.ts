@@ -1,8 +1,8 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
-import { createHmac } from 'node:crypto';
 import { TenantRegistryService } from '../tenants/tenant-registry.service';
+import { webhookSignature } from './webhook-signature';
 import { WEBHOOK_QUEUE, WebhookJob } from './webhook.types';
 
 /**
@@ -34,7 +34,7 @@ export class WebhookProcessor extends WorkerHost {
 
     const body = JSON.stringify(envelope);
     const timestamp = Date.now().toString();
-    const signature = createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');
+    const signature = webhookSignature(secret, timestamp, body);
 
     const res = await fetch(tenant.entity.webhookUrl, {
       method: 'POST',

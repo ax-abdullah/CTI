@@ -8,7 +8,14 @@
     "start": "node --env-file=.env dist/main.js",
     "start:dev": "tsc -p tsconfig.json --watch & node --watch dist/main.js",
     "webhook-receiver": "node scripts/webhook-receiver.mjs",
-    "seed": "node --env-file=.env dist/seed.js"
+    "seed": "node --env-file=.env dist/seed.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:cov": "jest --coverage",
+    "typeorm": "typeorm-ts-node-commonjs -d src/data-source.ts",
+    "migration:generate": "npm run typeorm -- migration:generate",
+    "migration:run": "npm run typeorm -- migration:run",
+    "migration:revert": "npm run typeorm -- migration:revert"
   },
   "dependencies": {
     "@nestjs/bullmq": "^11.0.4",
@@ -32,9 +39,16 @@
     "ws": "^8.21.1"
   },
   "devDependencies": {
+    "@nestjs/testing": "^11.1.28",
     "@types/express": "^5.0.6",
+    "@types/jest": "^30.0.0",
     "@types/node": "^22.10.0",
+    "@types/supertest": "^7.2.1",
     "@types/ws": "^8.18.1",
+    "jest": "^30.4.2",
+    "supertest": "^7.2.2",
+    "ts-jest": "^29.4.12",
+    "ts-node": "^10.9.2",
     "typescript": "^5.7.0"
   }
 }

@@ -25,7 +25,9 @@ import { ApiModule } from './api/api.module';
         type: 'postgres',
         url: config.getOrThrow<string>('DATABASE_URL'),
         autoLoadEntities: true,
-        synchronize: true, // dev only — switch to migrations before production
+        synchronize: false, // schema owned by migrations (src/migrations)
+        migrations: [__dirname + '/migrations/*.js'],
+        migrationsRun: true, // apply pending migrations at startup
       }),
     }),
     BullModule.forRootAsync({

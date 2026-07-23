@@ -1,6 +1,6 @@
 import 'reflect-metadata';
-import { DataSource } from 'typeorm';
 import { randomBytes, createHash, createCipheriv } from 'node:crypto';
+import { AppDataSource } from './data-source';
 import { PbxConnection } from './tenants/entities/pbx-connection.entity';
 import { Tenant } from './tenants/entities/tenant.entity';
 import { Agent } from './tenants/entities/agent.entity';
@@ -31,13 +31,10 @@ async function main() {
   const amiSecret = process.env.SEED_AMI_SECRET;
   if (!amiSecret) throw new Error('SEED_AMI_SECRET env var is required');
 
-  const ds = new DataSource({
-    type: 'postgres',
-    url: process.env.DATABASE_URL,
-    entities: [PbxConnection, Tenant, Agent, CrmIntegration],
-    synchronize: true, // dev only — real migrations before production
-  });
+  // Shared DataSource (synchronize:false); migrations own the schema.
+  const ds = AppDataSource;
   await ds.initialize();
+  await ds.runMigrations();
 
   await ds.getRepository(CrmIntegration).createQueryBuilder().delete().execute();
   await ds.getRepository(Agent).createQueryBuilder().delete().execute();

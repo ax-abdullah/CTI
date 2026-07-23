@@ -34,10 +34,12 @@ Fill in `.env`:
 - `DATABASE_URL` / `REDIS_HOST` / `REDIS_PORT` — match step 2 unless you changed the compose file
 - `RECORDINGS_BASE_DIR` — directory where PBX recordings are visible to this host (see §7)
 
-Build:
+Build, provision the schema (migrations own it — no `synchronize`), and run the tests:
 
 ```bash
 npm run build
+npm run migration:run   # creates/updates the schema on a clean or existing DB
+npm test                # 30 unit + integration tests, no live infra needed
 ```
 
 ## 4. Prepare the PBX (AMI)

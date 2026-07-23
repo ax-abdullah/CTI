@@ -8,7 +8,7 @@ The platform is feature-complete but **not yet production-safe**: zero automated
 
 | Phase | Track | Scope | Exit criterion |
 |---|---|---|---|
-| **6 — Test suite & CI + migrations** | Hardening | Jest/supertest unit + integration tests; TypeORM migrations replacing `synchronize`; GitHub Actions | Green CI on PRs; `migration:run` provisions a clean DB |
+| **6 — Test suite & CI + migrations** ✅ | Hardening | Jest/supertest unit + integration tests; TypeORM migrations replacing `synchronize`; GitHub Actions | **Done** — 30 tests green; `migration:run` provisions a clean DB |
 | **7 — Reliability & correctness** | Hardening | Call-state in Redis (TTL); `CoreShowChannels` resync on reconnect; rate-limit originate; graceful shutdown | App restart loses no in-flight calls; originate rate-limited per tenant |
 | **8 — Observability & operations** | Hardening | Structured logs; Prometheus `/metrics`; readiness/liveness probes; dead-letter alerting + retry UI | Metrics scrapeable; a failed CRM delivery alerts and is retryable from the UI |
 | **9 — Secure deployment & real CRM go-live** | Hardening | TLS/`wss`; containerization; KMS secrets; real Zoho/Salesforce orgs; recordings over the tunnel | A real customer FreePBX + real Zoho/SF org over TLS, no inbound holes |
@@ -19,9 +19,9 @@ The platform is feature-complete but **not yet production-safe**: zero automated
 
 ## Track A — Production Hardening
 
-### Phase 6 — Test suite & CI + migrations
+### Phase 6 — Test suite & CI + migrations ✅ Done
 
-Zero automated tests exist today; every phase was verified by hand against the lab PBX, and `synchronize:true` (in [src/seed.ts](../src/seed.ts)) is unsafe for real schemas. This phase makes the platform safe to change.
+Zero automated tests existed; every phase was verified by hand against the lab PBX, and `synchronize:true` drove the schema. Delivered: a Jest suite (30 tests — correlation engine, crypto, agent tokens, recording URLs, webhook signing, AmiClient over a mock socket), TypeORM migrations owning the schema (`npm run migration:run`), and a GitHub Actions workflow ([.github/workflows/ci.yml](../.github/workflows/ci.yml)) that builds, provisions a clean DB via migrations, and runs the suite on every PR.
 
 - **Unit** (Jest, Nest's default): `CallStateService` correlation driven by recorded AMI event fixtures → assert the normalized `call.*` output ([src/call-state/call-state.service.ts](../src/call-state/call-state.service.ts)); `CryptoService` encrypt/decrypt round-trip ([src/tenants/crypto.service.ts](../src/tenants/crypto.service.ts)); `agent-token.util` and `recordings.service` sign/verify ([src/softphone/agent-token.util.ts](../src/softphone/agent-token.util.ts), [src/recordings/recordings.service.ts](../src/recordings/recordings.service.ts)); webhook HMAC signing.
 - **Integration** (supertest): `AmiClient` against a mock AMI socket ([src/pbx-connector/ami-client.ts](../src/pbx-connector/ami-client.ts)); supervisor reconnect/backoff; BullMQ processors on a throwaway Redis; a cross-tenant leakage test (guaranteed by design in [api-key.guard.ts](../src/api/api-key.guard.ts) — assert it).
