@@ -316,6 +316,8 @@ Recording links: FreePBX stores recordings under `/var/spool/asterisk/monitor/..
 | **4 — Salesforce Open CTI** | Softphone page + Call Center XML, `SoftphoneGateway` WebSocket, `searchAndScreenPop`, click-to-dial, Task logging | Same three features working inside Salesforce Lightning |
 | **5 — Productization** | Reverse on-prem connector, recording proxy, admin UI, per-tenant dashboards, presence (`agent.state`) | Installable at a customer without inbound firewall holes |
 
+> **What's next:** Phases 0–5 are complete and merged. The forward roadmap (Phase 6+ — production hardening then WebRTC/ARI expansion) lives in [docs/ROADMAP.md](./docs/ROADMAP.md).
+
 ### Suggested libraries
 
 - AMI: [`asterisk-ami-client`](https://www.npmjs.com/package/asterisk-ami-client) or [`asterisk-manager`](https://www.npmjs.com/package/asterisk-manager) (both mature; wrap behind your own interface regardless)
