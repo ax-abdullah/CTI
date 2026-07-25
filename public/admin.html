@@ -40,6 +40,7 @@
   <section><h2>Tenants</h2><table id="tenants"></table></section>
   <section><h2>Active calls</h2><table id="calls"></table></section>
   <section><h2>Delivery queues</h2><table id="queues"></table></section>
+  <section><h2>Dead letters</h2><table id="deadletters"></table></section>
 </div>
 
 <script>
@@ -80,10 +81,28 @@
         Object.entries(o.queues).map(([name, q]) => [name, q.waiting ?? 0, q.active ?? 0, q.completed ?? 0,
           q.failed ? `<span class="pill bad">${q.failed}</span>` : 0]),
         'no queues');
+
+      const dl = await (await fetch('/admin/dead-letters', { headers: { 'X-Admin-Key': key } })).json();
+      table('deadletters', ['Queue', 'Type', 'Tenant', 'Reason', 'Attempts', ''],
+        (dl.deadLetters || []).map((d) => [d.queue, d.type, d.tenantId || '—',
+          `<span title="${(d.failedReason || '').replace(/"/g, '&quot;')}">${(d.failedReason || '').slice(0, 60)}</span>`,
+          d.attemptsMade,
+          `<button data-q="${d.queue}" data-j="${d.jobId}" class="retry">Retry</button>`]),
+        'no dead letters');
     } catch (err) {
       el('status').textContent = `error: ${err.message}`;
     }
   };
+
+  el('deadletters').addEventListener('click', async (e) => {
+    const btn = e.target.closest('button.retry');
+    if (!btn) return;
+    btn.disabled = true; btn.textContent = 'retrying…';
+    const res = await fetch(`/admin/dead-letters/${btn.dataset.q}/${btn.dataset.j}/retry`,
+      { method: 'POST', headers: { 'X-Admin-Key': el('key').value } });
+    el('status').textContent = res.ok ? `retried ${btn.dataset.q}#${btn.dataset.j}` : `retry failed (${res.status})`;
+    refresh();
+  });
 
   el('reload').addEventListener('click', async () => {
     const res = await fetch('/admin/reload', { method: 'POST', headers: { 'X-Admin-Key': el('key').value } });

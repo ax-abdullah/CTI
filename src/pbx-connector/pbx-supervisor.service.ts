@@ -94,21 +94,36 @@ export class PbxSupervisorService implements OnModuleInit, OnModuleDestroy {
 
     const callRef = randomUUID();
     const channel = tenant.entity.originateChannelTemplate.replaceAll('{ext}', agentExt);
-    const res = await connection.sendAction({
-      Action: 'Originate',
-      Channel: channel,
-      Context: tenant.entity.originateContext,
-      Exten: number,
-      Priority: '1',
-      CallerID: `${number} <${number}>`,
-      Timeout: '30000',
-      Async: 'true',
-      Variable: `CTI_CALL_REF=${callRef}`,
-    });
-    if (res.Response !== 'Success') {
-      throw new Error(`Originate rejected: ${res.Message ?? 'unknown'}`);
+    const startedAt = Date.now();
+    const report = (result: 'success' | 'rejected' | 'error') =>
+      this.bus.emit('originate.result', {
+        tenant: tenant.entity.slug,
+        result,
+        durationSec: (Date.now() - startedAt) / 1000,
+      });
+
+    try {
+      const res = await connection.sendAction({
+        Action: 'Originate',
+        Channel: channel,
+        Context: tenant.entity.originateContext,
+        Exten: number,
+        Priority: '1',
+        CallerID: `${number} <${number}>`,
+        Timeout: '30000',
+        Async: 'true',
+        Variable: `CTI_CALL_REF=${callRef}`,
+      });
+      if (res.Response !== 'Success') {
+        report('rejected');
+        throw new Error(`Originate rejected: ${res.Message ?? 'unknown'}`);
+      }
+      report('success');
+      this.logger.log(`[${tenant.entity.slug}] Originated ${channel} -> ${number} (ref ${callRef})`);
+      return { callRef };
+    } catch (err) {
+      if (!(err instanceof Error && err.message.startsWith('Originate rejected'))) report('error');
+      throw err;
     }
-    this.logger.log(`[${tenant.entity.slug}] Originated ${channel} -> ${number} (ref ${callRef})`);
-    return { callRef };
   }
 }

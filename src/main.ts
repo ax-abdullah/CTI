@@ -4,6 +4,8 @@ import { NestFactory } from '@nestjs/core';
 import { WsAdapter } from '@nestjs/platform-ws';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { makeLogger } from './observability/json-logger';
+import { HttpLoggingInterceptor } from './observability/http-logging.interceptor';
 
 function mountSwagger(app: Parameters<typeof SwaggerModule.createDocument>[0]): void {
   const config = new DocumentBuilder()
@@ -26,9 +28,11 @@ function mountSwagger(app: Parameters<typeof SwaggerModule.createDocument>[0]): 
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  app.useLogger(makeLogger()); // structured JSON logs (LOG_FORMAT=pretty for dev)
   app.useWebSocketAdapter(new WsAdapter(app));
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  app.useGlobalInterceptors(new HttpLoggingInterceptor());
   // SIGTERM/SIGINT run every module's shutdown hook: AMI sockets close, BullMQ
   // workers drain, Redis/PG disconnect, and pending finalize timers are cleared
   // (call-state is already persisted, so nothing in flight is lost).

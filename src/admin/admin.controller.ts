@@ -5,6 +5,7 @@ import {
   Controller,
   Get,
   Header,
+  Param,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -95,6 +96,52 @@ export class AdminController {
     await this.registry.onModuleInit();
     this.supervisor.reload();
     return { status: 'reloaded' };
+  }
+
+  private queueByName(name: string): Queue | undefined {
+    return { webhook: this.webhookQueue, zoho: this.zohoQueue, salesforce: this.salesforceQueue }[name];
+  }
+
+  @ApiOperation({
+    summary: 'List dead-lettered (failed) deliveries across all queues',
+    description: 'Failed BullMQ jobs retained for inspection; retry with POST /admin/dead-letters/:queue/:jobId/retry.',
+  })
+  @UseGuards(AdminKeyGuard)
+  @Get('dead-letters')
+  async deadLetters() {
+    const queues: Array<[string, Queue]> = [
+      ['webhook', this.webhookQueue],
+      ['zoho', this.zohoQueue],
+      ['salesforce', this.salesforceQueue],
+    ];
+    const items: unknown[] = [];
+    for (const [name, queue] of queues) {
+      const failed = await queue.getFailed(0, 49);
+      for (const job of failed) {
+        items.push({
+          queue: name,
+          jobId: job.id,
+          type: job.name,
+          attemptsMade: job.attemptsMade,
+          failedReason: job.failedReason,
+          tenantId: (job.data as any)?.envelope?.tenantId ?? (job.data as any)?.tenantSlug,
+          failedAt: job.finishedOn ? new Date(job.finishedOn).toISOString() : undefined,
+        });
+      }
+    }
+    return { deadLetters: items };
+  }
+
+  @ApiOperation({ summary: 'Retry one dead-lettered job' })
+  @UseGuards(AdminKeyGuard)
+  @Post('dead-letters/:queue/:jobId/retry')
+  async retryDeadLetter(@Param('queue') queueName: string, @Param('jobId') jobId: string) {
+    const queue = this.queueByName(queueName);
+    if (!queue) throw new BadRequestException('Unknown queue');
+    const job = await queue.getJob(jobId);
+    if (!job) throw new BadRequestException('Job not found (may have expired or already retried)');
+    await job.retry();
+    return { status: 'retrying', queue: queueName, jobId };
   }
 
   @ApiOperation({

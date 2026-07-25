@@ -10,7 +10,7 @@ The platform is feature-complete but **not yet production-safe**: zero automated
 |---|---|---|---|
 | **6 — Test suite & CI + migrations** ✅ | Hardening | Jest/supertest unit + integration tests; TypeORM migrations replacing `synchronize`; GitHub Actions | **Done** — 30 tests green; `migration:run` provisions a clean DB |
 | **7 — Reliability & correctness** ✅ | Hardening | Call-state in Redis (TTL); `CoreShowChannels` resync on reconnect; rate-limit originate; graceful shutdown | **Done** — verified live: SIGKILL mid-call → resync recovers → `call.ended` still fires; originate 429 after per-tenant limit |
-| **8 — Observability & operations** | Hardening | Structured logs; Prometheus `/metrics`; readiness/liveness probes; dead-letter alerting + retry UI | Metrics scrapeable; a failed CRM delivery alerts and is retryable from the UI |
+| **8 — Observability & operations** ✅ | Hardening | Structured logs; Prometheus `/metrics`; readiness/liveness probes; dead-letter alerting + retry UI | **Done** — /metrics scrapeable; a failed delivery alerts (structured WARN) and is retryable from the admin UI |
 | **9 — Secure deployment & real CRM go-live** | Hardening | TLS/`wss`; containerization; KMS secrets; real Zoho/Salesforce orgs; recordings over the tunnel | A real customer FreePBX + real Zoho/SF org over TLS, no inbound holes |
 | **10 — WebRTC softphone + more CRMs** | Expansion | In-browser audio (PJSIP WebRTC + SIP.js); HubSpot + Dynamics adapters | Agent places/receives a call in the browser; HubSpot pop + log works |
 | **11 — Advanced telephony (ARI)** | Expansion | ARI connector; in-call coaching (whisper/barge/spy); queue/ACD; CRM-driven IVR | A supervisor whispers into a live call; queue stats stream to a wallboard |
@@ -41,16 +41,16 @@ The correlation engine kept call-state in in-memory `Map`s, so a restart dropped
 
 **Verified live:** a call was SIGKILL'd mid-flight, its state survived in Redis, resync recovered it on restart (`kept 2`), and `call.ended` still fired with the original callRef/duration on hangup; originate returned 429 after the per-tenant limit; SIGTERM exited cleanly in ~2s. 41 tests green.
 
-### Phase 8 — Observability & operations
+### Phase 8 — Observability & operations ✅ Done
 
-Today the only operational surfaces are `/health` and the admin dashboard's queue counts.
+The only operational surfaces were `/health` and the admin queue counts. Delivered ([src/observability/](../src/observability/)):
 
-- **Structured JSON logging** with `tenantId`/`callId` correlation fields threaded through the event pipeline.
-- **Prometheus `/metrics`:** call counts by disposition, event-processing lag, queue depth/failures per surface, connection up/down, originate latency.
-- **Probes:** distinct readiness vs liveness endpoints for orchestrators (separate from the human-facing `/health`).
-- **Alerting** on dead-letter/`failed` queue counts and connection drops; extend the admin dashboard ([public/admin.html](../public/admin.html)) with a dead-letter inspect + retry view.
+- **Structured JSON logging** — a zero-dep `JsonLogger` (one JSON object per line; `LOG_FORMAT=pretty` for local dev) set via `app.useLogger`, plus an HTTP interceptor logging method/path/status/duration/tenant. Event-pipeline logs embed tenant/callId.
+- **Prometheus `/metrics`** (`prom-client`): `cti_calls_total{tenant,direction,disposition}`, `cti_call_events_total{type}`, `cti_originate_total` + `cti_originate_duration_seconds` histogram, `cti_pbx_connection_up{connection}` and `cti_queue_jobs{queue,state}` gauges (refreshed on a 5s collector), plus default Node metrics.
+- **Probes:** `GET /health/live` (process) and `/health/ready` (Postgres + Redis → 200/503), distinct from the human-facing `/health`.
+- **Alerting + dead-letter UI:** the gauge collector emits an edge-triggered structured `alert` WARN on connection-down / failed-queue jobs; `GET /admin/dead-letters` lists failed jobs across queues and `POST /admin/dead-letters/:queue/:jobId/retry` retries one, surfaced as a **Dead letters** panel with Retry buttons in [public/admin.html](../public/admin.html).
 
-**Exit:** metrics are scrapeable; a failed CRM delivery raises an alert and can be retried from the UI.
+**Verified live:** `/metrics` scraped with real call/originate/connection/queue series; `/health/ready` returned 200 with both stores up; a downed webhook endpoint produced 6 dead-letters + an `alert kind=dead_letters` log, and retrying one from the API delivered it to a restored receiver and cleared it. 48 tests green.
 
 ### Phase 9 — Secure deployment & real CRM go-live
 
