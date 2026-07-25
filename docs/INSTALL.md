@@ -39,7 +39,7 @@ Build, provision the schema (migrations own it — no `synchronize`), and run th
 ```bash
 npm run build
 npm run migration:run   # creates/updates the schema on a clean or existing DB
-npm test                # 30 unit + integration tests, no live infra needed
+npm test                # 60 unit + integration tests, no live infra needed
 ```
 
 ## 4. Prepare the PBX (AMI)
@@ -85,8 +85,8 @@ SEED_PBX_MODE=reverse npm run seed # reverse mode (prints the connector token)
 
 1. `POST /admin/pbx-connections` — register the customer PBX (`mode: reverse` for NAT'd sites; save the one-time `connectorToken`)
 2. `POST /admin/tenants` — save the one-time `apiKey`
-3. `POST /admin/agents` — one per extension, with `crmRefs` for Zoho/Salesforce user mapping
-4. `POST /admin/integrations` — Zoho and/or Salesforce credentials
+3. `POST /admin/agents` — one per extension, with `crmRefs` (`{zoho, salesforce, hubspot, dynamics}` user IDs) and optional WebRTC SIP creds
+4. `POST /admin/integrations` — any of `zoho` / `salesforce` / `hubspot` / `dynamics` (a tenant may enable several; call logging fans out to each)
 5. `POST /admin/reload` — apply without restarting
 
 ## 6. Run and verify
@@ -105,8 +105,8 @@ curl -s http://127.0.0.1:3000/health   # → {"status":"ok","connections":[{...,
 
 Point `RECORDINGS_BASE_DIR` at a directory containing the PBX's MixMonitor output:
 
-- **Lab:** the compose file bind-mounts the monitor dir to `../Multi-Tenant-Asterisk-PBX/recordings`.
-- **Production:** mount/sync `/var/spool/asterisk/monitor` from the PBX (NFS, rsync, object storage). Fetching recordings *through* the reverse tunnel is on the roadmap.
+- **Direct connections:** the CTI reads a mount/sync of the monitor dir. Lab: the compose bind-mounts it to `../Multi-Tenant-Asterisk-PBX/recordings`; production: mount/sync `/var/spool/asterisk/monitor` (NFS, rsync, object storage).
+- **Reverse connections:** no mount needed — set `AGENT_RECORDINGS_DIR` on the connector agent (§8) and the CTI pulls each file from the on-prem agent over the tunnel on demand.
 
 `call.ended` events then carry `recordingUrl` — a 15-minute signed link served by the CTI; the PBX filesystem is never exposed.
 
@@ -142,9 +142,22 @@ WantedBy=multi-user.target
 
 ## 9. CRM setup
 
-- **Zoho:** register the PhoneBridge integration (partner flow), set the click-to-call callback to `POST {PUBLIC_BASE_URL}/v1/integrations/zoho/{tenantSlug}/click-to-call` with the integration's `callbackToken`, and store `clientId`/`clientSecret`/`refreshToken` via `POST /admin/integrations`.
-- **Salesforce:** create a connected app (refresh-token flow) in the customer org, import `GET /softphone/callcenter-definition.xml` under Setup → Call Center (replace `CTI_BASE_URL`), assign users, and store the connected-app credentials via `POST /admin/integrations`.
+All four CRM adapters store non-secret config + encrypted secrets on a `CrmIntegration` row (`POST /admin/integrations`); each mock in `scripts/mock-*.mjs` proves the contract locally.
+
+- **Zoho:** register the PhoneBridge integration (partner flow), set the click-to-call callback to `POST {PUBLIC_BASE_URL}/v1/integrations/zoho/{tenantSlug}/click-to-call` with the integration's `callbackToken`, and store `clientId`/`clientSecret`/`refreshToken`.
+- **Salesforce:** create a connected app (refresh-token flow) in the customer org, import `GET /softphone/callcenter-definition.xml` under Setup → Call Center (replace `CTI_BASE_URL`), assign users, and store the connected-app credentials. Logs a completed Call `Task`.
+- **HubSpot:** install a HubSpot app (OAuth), store `clientId`/`clientSecret`/`refreshToken`. Logs a Call engagement; screen pop / click-to-call is the client-side Calling Extensions SDK. Map agents via `crmRefs.hubspot`.
+- **Dynamics 365:** register an Azure AD app with an application user in Dataverse, store `clientId`/`clientSecret` + `aadTenantId`/`orgUrl`. Logs a phonecall activity; pop/click-to-call is the client-side Channel Integration Framework. Map agents via `crmRefs.dynamics`.
 - **Any other CRM:** consume the signed webhooks (`docs/FEATURES.md` §Generic webhooks) — reference receiver in `scripts/webhook-receiver.mjs`.
+
+## 9b. WebRTC softphone (optional — in-browser audio)
+
+Lets agents take audio in the browser instead of a desk phone.
+
+1. **PBX:** enable a PJSIP WebRTC transport (wss + DTLS-SRTP) and per-agent webrtc endpoints — reference config in `../Multi-Tenant-Asterisk-PBX/config/webrtc.conf` (needs `res_http_websocket`, HTTP/TLS on 8089, and a DTLS cert).
+2. **CTI env:** set `WEBRTC_WSS_URL` (e.g. `wss://pbx.example.com:8089/ws`), `WEBRTC_SIP_DOMAIN`, and optionally `WEBRTC_STUN_URL`.
+3. **Agents:** give each agent SIP credentials (`sipUsername`/`sipPassword`) matching its PBX endpoint — seeded in the lab as `webrtc-<ext>`; set via the registry in production.
+4. The softphone page ([public/softphone.html](../public/softphone.html)) then offers **Enable browser audio** → it fetches `GET /v1/softphone/webrtc-config`, registers via self-hosted JsSIP, and places/receives calls with real audio. Without this, the softphone falls back to desk-phone click-to-call.
 
 ## 10. Container deployment (production-shaped)
 
@@ -165,7 +178,9 @@ The mock servers (`scripts/mock-*.mjs`) prove the contract; going live needs the
 
 1. **Zoho PhoneBridge** — apply for PhoneBridge partner access; create a Server-based OAuth client (correct DC: `.com`/`.eu`/`.sa`). Obtain a refresh token, then `POST /admin/integrations` with `type: zoho`, `config` (DC base URLs + `clientId`), and `secrets` (`clientSecret`, `refreshToken`, `callbackToken`). Register the click-to-call callback `POST {PUBLIC_BASE_URL}/v1/integrations/zoho/{tenantSlug}/click-to-call`. Reconcile payload field names in [zoho-client.ts](../src/crm-adapters/zoho/zoho-client.ts) against the partner docs (confined to that file + the mock).
 2. **Salesforce Open CTI** — in the customer org create a Connected App (enable the refresh-token flow), import `GET /softphone/callcenter-definition.xml` under Setup → Call Center (replace `CTI_BASE_URL` with your HTTPS URL), assign users, and `POST /admin/integrations` with `type: salesforce` + the connected-app credentials.
-3. Run `POST /admin/reload`, place a test call, and confirm the screen pop, click-to-dial, and logged activity in the live org.
+3. **HubSpot** — install a HubSpot app with the calling + engagement scopes, complete the OAuth install to obtain a refresh token, and `POST /admin/integrations` with `type: hubspot`. Embed the softphone via the Calling Extensions SDK for pop/click-to-call.
+4. **Dynamics 365** — register an Azure AD app + Dataverse application user, and `POST /admin/integrations` with `type: dynamics` (`aadTenantId`, `orgUrl`, `clientId`/`clientSecret`). Configure the Channel Integration Framework panel for pop/click-to-call.
+5. Run `POST /admin/reload`, place a test call, and confirm the screen pop, click-to-dial, and logged activity in each live org.
 
 ## 12. Production checklist
 

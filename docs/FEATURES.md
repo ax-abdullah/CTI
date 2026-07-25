@@ -17,9 +17,12 @@ Every feature of the CTI platform, what it does, how it works, and how to use it
 | 9 | [Softphone & agent sessions](#9-softphone--agent-sessions) | `/softphone`, `/softphone-ws`, agent JWTs | Phase 4 |
 | 10 | [Reverse on-prem connector](#10-reverse-on-prem-connector) | `/connector-ws` + `connector-agent.mjs` | Phase 5 |
 | 11 | [Agent presence](#11-agent-presence) | `agent.state` events, `GET /v1/agents/state` | Phase 5 |
-| 12 | [Call recordings](#12-call-recordings) | signed URLs, `GET /v1/recordings/:token` | Phase 5 |
-| 13 | [Admin API & dashboard](#13-admin-api--dashboard) | `/admin`, hot reload | Phase 5 |
-| 14 | [Security model](#14-security-model) | cross-cutting | all |
+| 12 | [Call recordings](#12-call-recordings) | signed URLs, `GET /v1/recordings/:token` (local or over tunnel) | Phase 5 / 9 |
+| 13 | [Admin API & dashboard](#13-admin-api--dashboard) | `/admin`, hot reload, dead-letter retry | Phase 5 / 8 |
+| 14 | [Observability & deployment](#14-observability--deployment) | `/metrics`, `/health/live`+`/ready`, JSON logs, Docker + Caddy TLS | Phase 6–9 |
+| 15 | [WebRTC softphone](#15-webrtc-softphone-phase-10) | in-browser audio via self-hosted JsSIP | Phase 10 |
+| 16 | [HubSpot & Dynamics adapters](#16-hubspot--dynamics-adapters-phase-10) | Call engagement / phonecall activity | Phase 10 |
+| 17 | [Security model](#17-security-model) | cross-cutting | all |
 
 ---
 
@@ -112,8 +115,19 @@ Install at any customer **without inbound firewall holes**.
 
 ## 13. Admin API & dashboard
 
-- `/admin` — auto-refreshing dashboard: connection status, tenants, active calls, queue health.
-- `X-Admin-Key` API: `GET /admin/overview`, `POST /admin/{pbx-connections,tenants,agents,integrations}` (generated credentials returned once), `POST /admin/reload` — hot-reloads the registry and restarts **only changed** PBX connections; live tunnels survive.
+- `/admin` — auto-refreshing dashboard: connection status, tenants, active calls, queue health, **dead letters** with a Retry button.
+- `X-Admin-Key` API: `GET /admin/overview`, `POST /admin/{pbx-connections,tenants,agents,integrations}` (generated credentials returned once), `GET /admin/dead-letters` + `POST /admin/dead-letters/:queue/:jobId/retry`, `POST /admin/reload` — hot-reloads the registry and restarts **only changed** PBX connections; live tunnels survive.
+
+## 14. Observability & deployment
+
+Production operability (Phases 6–9):
+
+- **Structured JSON logging** (`LOG_FORMAT=json`) with an HTTP request log (method/path/status/duration/tenant).
+- **Prometheus `/metrics`** (`prom-client`): calls by tenant/direction/disposition, event counts, originate latency histogram, per-connection up/down, per-queue depth (all five delivery queues) — plus default Node metrics.
+- **Probes:** `/health/live` (process) and `/health/ready` (Postgres + Redis → 200/503), distinct from the human-facing `/health`.
+- **Alerting:** structured `alert` WARN logs on connection-down and dead-letter (failed) jobs; retry from the admin UI.
+- **Reliability:** call-state persisted to Redis (survives restart; `CoreShowChannels` resync on reconnect), per-tenant originate rate-limit, graceful shutdown.
+- **Deployment:** multi-stage `Dockerfile` (non-root, migrations at startup) + `docker-compose.full.yml` (app + Postgres + Redis + **Caddy** TLS/wss reverse proxy). Tests: 60-case Jest suite + GitHub Actions CI. See [INSTALL §10](../docs/INSTALL.md), [ADR-0009](./adr/0009-tls-terminating-reverse-proxy-deployment.md).
 
 ## 15. WebRTC softphone (Phase 10)
 
@@ -128,7 +142,7 @@ Two more CRMs behind the same normalized-event bus, following the Zoho/Salesforc
 
 A tenant may enable several CRMs at once; logging fans out to each enabled adapter.
 
-## 14. Security model
+## 17. Security model
 
 - AMI users scoped to `read=call,cdr,dialplan,dtmf` / `write=call,originate`; never `write=system`; 5038 never public.
 - Secrets at rest: AES-256-GCM under `CREDS_KEY`; keys/tokens hashed (sha256) with one-time disclosure.

@@ -6,22 +6,32 @@ Multi-tenant CTI middleware connecting Asterisk/FreePBX to CRMs — click-to-cal
 
 | Doc | What's in it |
 |---|---|
-| [docs/INSTALL.md](./docs/INSTALL.md) | Step-by-step installation: infra, env, PBX prep (lab + production FreePBX), onboarding, reverse connector, production checklist |
-| [docs/FEATURES.md](./docs/FEATURES.md) | Catalog of all 14 features with how each works and its endpoints |
+| [docs/INSTALL.md](./docs/INSTALL.md) | Step-by-step installation: infra, env, PBX prep (lab + production FreePBX), onboarding, WebRTC, reverse connector, container deploy, go-live runbook |
+| [docs/FEATURES.md](./docs/FEATURES.md) | Feature catalog — how each works and its endpoints |
 | **`/docs` (Swagger UI)** | Live, interactive API reference with all four auth schemes — served by the running app |
 | [docs/postman/](./docs/postman/CTI-Platform.postman_collection.json) | Postman collection: every endpoint with request + example responses |
-| [docs/adr/](./docs/adr/README.md) | Architecture Decision Records (AMI-over-ARI, correlation engine, multi-tenancy, reverse connector, …) |
-| [docs/ROADMAP.md](./docs/ROADMAP.md) | Forward roadmap (Phase 6+): production hardening, then WebRTC/more-CRMs and advanced ARI telephony |
-| [cti-architecture.md](./cti-architecture.md) | The original knowledge + architecture document with sequence diagrams |
+| [docs/adr/](./docs/adr/README.md) | Architecture Decision Records 0001–0010 (AMI-over-ARI, correlation engine, multi-tenancy, reverse connector, deployment, WebRTC/CRM expansion, …) |
+| [docs/ROADMAP.md](./docs/ROADMAP.md) | Roadmap with per-phase status; only Phase 11 (ARI) remains |
+| [cti-architecture.md](./cti-architecture.md) | Architecture explainer + sequence diagrams (with an as-built note) |
 
-**Phase 5 status:** productized. Everything from Phases 1–4 (multi-tenant core, generic webhooks, Zoho PhoneBridge, Salesforce Open CTI softphone) plus: reverse on-prem connector (no inbound firewall holes at the customer), recording proxy with signed URLs, agent presence, and an admin API/dashboard with registry hot-reload.
+## Status
 
-## Phase 5 additions
+Built and validated through **Phase 10**. What's implemented:
 
-- **Reverse connector** — a PBX connection with `mode: reverse` is passive: the customer runs [scripts/connector-agent.mjs](./scripts/connector-agent.mjs) (dependency-free, Node ≥ 21) next to their PBX with `CTI_URL` + `CONNECTOR_TOKEN`; it dials OUT to `wss://cti/connector-ws` and tunnels the local AMI socket. AMI credentials never leave the cloud registry — login happens server-side over the tunnel. Heartbeats (15s ping) reap dead tunnels; the agent owns reconnection with backoff.
-- **Recordings** — `MIXMONITOR_FILENAME` is captured into call state; `call.ended` carries `recordingUrl`, a 15-minute signed capability URL served by `GET /v1/recordings/:token` from `RECORDINGS_BASE_DIR` (basename-only tokens, no traversal). Lab: the Asterisk monitor dir is bind-mounted to `../Multi-Tenant-Asterisk-PBX/recordings`. Fetching recordings *through* the reverse tunnel is deferred.
-- **Presence** — `agent.state` (`RINGING`/`INUSE`/`NOT_INUSE` derived from call lifecycle, `UNAVAILABLE` from AMI `DeviceStateChange`) broadcast to the tenant's softphone sockets and queryable at `GET /v1/agents/state`.
-- **Admin** — `/admin` dashboard (connections, tenants, active calls, queue health) backed by `X-Admin-Key`-guarded endpoints: `GET /admin/overview`, `POST /admin/{pbx-connections,tenants,agents,integrations}` (generated keys/tokens returned exactly once), and `POST /admin/reload` which re-reads the registry and diff-restarts only changed PBX connections.
+- **Core (P1–2):** hand-rolled AMI connector, Linkedid call-state correlation → normalized `call.*` events, multi-tenant registry (shared-PBX routing, encrypted creds, scoped API keys), generic signed webhooks over durable BullMQ.
+- **CRMs (P3–4, P10):** Zoho PhoneBridge, Salesforce Open CTI, HubSpot, Microsoft Dynamics 365 — a tenant can enable several; logging fans out to each.
+- **Productization (P5):** reverse on-prem connector (no inbound firewall holes), recording proxy with signed URLs, agent presence, admin API + dashboard with hot-reload.
+- **Hardening (P6–9):** 60-test Jest suite + CI, TypeORM migrations, Redis-backed call-state + `CoreShowChannels` resync, per-tenant originate rate-limit, graceful shutdown, structured JSON logs, Prometheus `/metrics`, readiness/liveness probes, dead-letter alerting + retry UI, multi-stage Docker image + Caddy TLS/wss reverse proxy, recordings pulled over the reverse tunnel.
+- **WebRTC softphone (P10):** in-browser audio via self-hosted JsSIP (real two-way audio needs a WebRTC-configured PBX).
+
+**Truly pending:** real Zoho/Salesforce/HubSpot/Dynamics org credentials (operational — see [INSTALL §11](./docs/INSTALL.md)); a WebRTC-enabled Asterisk for live media; and Phase 11 (ARI: in-call coaching, queue/ACD, CRM-driven IVR).
+
+## Selected internals
+
+- **Reverse connector** — a PBX connection with `mode: reverse` is passive: the customer runs [scripts/connector-agent.mjs](./scripts/connector-agent.mjs) (dependency-free, Node ≥ 21) with `CTI_URL` + `CONNECTOR_TOKEN`; it dials OUT to `wss://cti/connector-ws` and tunnels the local AMI socket (and, on a second channel, serves recording files). AMI credentials never leave the cloud registry — login happens server-side over the tunnel. Heartbeats (15s ping) reap dead tunnels.
+- **Recordings** — `call.ended` carries `recordingUrl`, a 15-minute signed capability URL served by `GET /v1/recordings/:token` (basename-only, traversal-proof). Direct connections read `RECORDINGS_BASE_DIR`; reverse connections pull the file from the on-prem agent over the tunnel — no shared mount needed.
+- **Presence** — `agent.state` (`RINGING`/`INUSE`/`NOT_INUSE` from call lifecycle, `UNAVAILABLE` from AMI `DeviceStateChange`) broadcast to the tenant's softphone sockets and queryable at `GET /v1/agents/state`.
+- **Admin** — `/admin` dashboard (connections, tenants, active calls, queue health, dead-letter retry) over `X-Admin-Key` endpoints: `GET /admin/overview`, `POST /admin/{pbx-connections,tenants,agents,integrations}` (generated keys/tokens returned once), `POST /admin/dead-letters/:queue/:jobId/retry`, and `POST /admin/reload` (diff-restarts only changed connections).
 
 ## Salesforce Open CTI adapter
 
@@ -86,8 +96,14 @@ Normalized events (`call.ringing`, `call.answered`, `call.ended`) are enqueued i
 
 Headers: `X-CTI-Timestamp` (epoch ms) and `X-CTI-Signature` = hex HMAC-SHA256 of `` `${timestamp}.${rawBody}` `` with the tenant's webhook secret. Reject skew > 5 min; compare in constant time. Reference consumer: [scripts/webhook-receiver.mjs](./scripts/webhook-receiver.mjs).
 
-## Notes / deferred
+## Tests & container deployment
 
-- `synchronize: true` (TypeORM) is dev-only; introduce migrations before any production deployment.
-- Call state is in-memory per process; `CoreShowChannels` resync on reconnect and Redis-backed state are follow-ups.
-- Registry is loaded at boot — reseed + restart to change tenants (admin CRUD arrives with Phase 5).
+```bash
+npm test                                        # 60 unit + integration tests, no live infra
+docker compose -f docker-compose.full.yml up -d --build   # app + pg + redis + Caddy (TLS)
+curl -k https://localhost:8443/health                     # HTTPS via Caddy
+```
+
+Observability: `GET /metrics` (Prometheus), `GET /health/live` + `/health/ready` (probes), structured JSON logs (`LOG_FORMAT=json`). See [INSTALL §10–12](./docs/INSTALL.md) for production deployment, secrets/KMS, and the go-live checklist.
+
+> Earlier "deferred" items (TypeORM migrations, Redis-backed call state + resync, admin CRUD/hot-reload, recordings over the tunnel) are all **implemented** — see the [Status](#status) section. Registry changes now apply via `POST /admin/reload` (no restart).

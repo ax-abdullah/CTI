@@ -4,7 +4,13 @@
 
 - **Targets:** production FreePBX servers + the lab `Multi-Tenant-Asterisk-PBX` Docker project (prototyping)
 - **Stack:** a dedicated **NestJS (TypeScript)** application — Redis for live call state, PostgreSQL for the tenant registry
-- **Status:** design doc — no code yet. See the [Roadmap](#7-roadmap) for build phases.
+- **Status:** **built and validated through Phase 10** (this began as a design doc; it now doubles as the architecture explainer). For the current feature set see [docs/FEATURES.md](./docs/FEATURES.md), the design decisions in [docs/adr/](./docs/adr/README.md), setup in [docs/INSTALL.md](./docs/INSTALL.md), and the live API at `/docs`.
+
+> **As-built note.** The design below held up; a few concrete choices diverged from the original sketch and are worth flagging so this document isn't misleading:
+> - **AMI client is hand-rolled**, not `asterisk-ami-client`/`asterisk-manager` (the npm libraries are unmaintained; the protocol is ~150 lines — [ADR-0002](./docs/adr/0002-hand-rolled-ami-client.md)). It runs over any transport, which the reverse connector reuses.
+> - **CRM adapters are one module per CRM** (`ZohoModule`, `SalesforceModule`, `HubSpotModule`, `DynamicsModule`), not a single `CrmAdaptersModule` with a `CrmAdapter` interface — each follows the same dispatcher/processor/queue shape ([ADR-0006](./docs/adr/0006-crm-adapter-models.md), [ADR-0010](./docs/adr/0010-webrtc-softphone-and-crm-expansion.md)).
+> - **ORM is TypeORM** (with real migrations, not `synchronize`); **WebSockets use `ws`** (`@nestjs/platform-ws`), not socket.io; **AMI secrets/CRM tokens are AES-256-GCM** under one master key (`CryptoService`), not libsodium.
+> - **Reverse on-prem connector** (customer dials out; no inbound holes) and **recordings pulled over that tunnel** are built ([ADR-0007](./docs/adr/0007-reverse-onprem-connector.md)/[0008](./docs/adr/0008-signed-capability-urls-for-recordings.md)/[0009](./docs/adr/0009-tls-terminating-reverse-proxy-deployment.md)). **WebRTC softphone** (in-browser audio via self-hosted JsSIP) is built; real two-way audio needs a WebRTC-configured PBX. **ARI** remains the one deferred surface (Phase 11).
 
 ---
 
@@ -117,10 +123,11 @@ DialBegin ────► RINGING ── screen-pop event fires here
 **The output of this layer is a small normalized event vocabulary** that every CRM adapter consumes:
 
 ```
-call.ringing   { callId, tenantId, direction, agentExt, remoteNumber, remoteName?, queue? }
-call.answered  { callId, answeredByExt, timestamp }
-call.ended     { callId, disposition, durationSec, billsecSec, recordingUrl?, cdr }
-agent.state    { ext, state }            // for presence, later
+call.ringing   { callId, tenantId, direction, agentExt, remoteNumber, remoteName?, startedAt }
+call.answered  { callId, tenantId, answeredAt }
+call.ended     { callId, tenantId, direction, agentExt, remoteNumber, disposition,
+                 durationSec, billsecSec, startedAt, endedAt, callRef?, recordingUrl? }
+agent.state    { tenantId, ext, state, at }     // presence (RINGING/INUSE/NOT_INUSE/UNAVAILABLE)
 ```
 
 ---
@@ -198,19 +205,22 @@ flowchart LR
 
 ### 5.2 Module breakdown
 
+*(As shipped — module names/tech match the code.)*
+
 | Module | Responsibility | Key tech |
 |---|---|---|
-| `PbxConnectorModule` | One AMI client per tenant PBX: connect, auth, keepalive, reconnect w/ backoff, `CoreShowChannels` resync on reconnect, raw-event → internal-event translation, `Originate` execution | `asterisk-ami-client` (or `asterisk-manager`), Nest lifecycle hooks |
-| `CallStateModule` | Linkedid grouping, state machine (§3), local-channel filtering, direction detection, queue/transfer handling; emits the normalized vocabulary | Redis (call state, TTL), `@nestjs/event-emitter` |
-| `TenantModule` | Tenant registry: PBX credentials (encrypted), CRM OAuth tokens, agent↔extension↔CRM-user mappings, webhook URLs + signing secrets, API keys | PostgreSQL via Prisma/TypeORM, `@nestjs/config` |
-| `CrmAdaptersModule` | `CrmAdapter` interface (`onCallRinging/Answered/Ended`, `resolveClickToCall`) with Zoho, Salesforce, Webhook implementations; per-tenant fan-out | BullMQ queues per adapter (durable, retried) |
-| `ApiModule` | REST: `/v1/calls/originate`, call queries, tenant/agent admin CRUD, Zoho click-to-call callback endpoint | Nest controllers, guards (API key / JWT) |
-| `SoftphoneGateway` | WebSocket namespace for Salesforce softphone pages: agent auth, per-agent event push | `@nestjs/websockets` (socket.io or ws) |
+| `PbxConnectorModule` | One supervised AMI connection per PBX (direct dial-out **or** reverse tunnel): connect, auth, keepalive, reconnect w/ backoff; `ResyncService` runs `CoreShowChannels` on (re)connect; `ReverseConnectorGateway` + `ConnectorFilesModule` for on-prem agents; `Originate` execution | hand-rolled `AmiClient` (any transport), Nest lifecycle hooks |
+| `CallStateModule` | Linkedid grouping, state machine (§3), Local-channel filtering, direction detection; write-through to Redis (TTL); emits the normalized vocabulary | `ioredis` (call state, TTL), `@nestjs/event-emitter` |
+| `TenantsModule` | Tenant registry: PBX credentials (encrypted), CRM configs/tokens, agent↔extension↔CRM-user mappings + SIP creds, webhook URLs + signing secrets, hashed API keys; `CryptoService` (AES-256-GCM) | PostgreSQL via **TypeORM (migrations)**, `@nestjs/config` |
+| `WebhooksModule` + per-CRM modules (`ZohoModule`, `SalesforceModule`, `HubSpotModule`, `DynamicsModule`) | Each: dispatcher (`@OnEvent(call.*)`) → durable queue → processor that talks to the CRM; per-tenant fan-out; enabled only for tenants with that integration | BullMQ (`@nestjs/bullmq`) queue per surface |
+| `ApiModule` / `AdminModule` | REST: `/v1/calls/originate`, call/agent-state queries; admin CRUD + hot-reload + dead-letter retry; Zoho click-to-call callback | Nest controllers, guards (tenant/admin key, agent JWT, throttler) |
+| `SoftphoneModule` (`SoftphoneGateway`) | `ws` gateway pushing each agent's `call.*` + `agent.state`; agent login/JWT; WebRTC config; serves the softphone page + self-hosted JsSIP | `@nestjs/platform-ws` (`ws`) |
+| `RecordingsModule` / `PresenceModule` / `ObservabilityModule` | Signed recording URLs (local mount or over the tunnel); `agent.state` presence; structured logs, Prometheus `/metrics`, `/health/live`+`/ready`, dead-letter alerts | `prom-client`, `ioredis` |
 
 **Design rules:**
 - Adapters consume **only** the normalized events — no AMI types leak past `CallStateModule`.
 - All CRM delivery goes through **BullMQ** (Redis-backed) so a CRM outage never blocks event processing; retries + dead-letter per tenant.
-- The connector is an interface (`PbxConnector`) with the AMI implementation first — leaves room for an ARI or dialplan-hook connector later without touching anything downstream.
+- The connector is an internal interface (direct + reverse AMI implementations today) — leaves room for an ARI connector (Phase 11) without touching anything downstream.
 
 ### 5.3 Flow 1 — inbound call → screen pop
 
@@ -316,20 +326,20 @@ Recording links: FreePBX stores recordings under `/var/spool/asterisk/monitor/..
 | **4 — Salesforce Open CTI** | Softphone page + Call Center XML, `SoftphoneGateway` WebSocket, `searchAndScreenPop`, click-to-dial, Task logging | Same three features working inside Salesforce Lightning |
 | **5 — Productization** | Reverse on-prem connector, recording proxy, admin UI, per-tenant dashboards, presence (`agent.state`) | Installable at a customer without inbound firewall holes |
 
-> **What's next:** Phases 0–5 are complete and merged. The forward roadmap (Phase 6+ — production hardening then WebRTC/ARI expansion) lives in [docs/ROADMAP.md](./docs/ROADMAP.md).
+> **What's next:** Phases 0–10 are complete (and validated). The full forward roadmap and per-phase status live in [docs/ROADMAP.md](./docs/ROADMAP.md); only **Phase 11 (ARI advanced telephony)** remains.
 
-### Suggested libraries
+### Libraries used (as built)
 
-- AMI: [`asterisk-ami-client`](https://www.npmjs.com/package/asterisk-ami-client) or [`asterisk-manager`](https://www.npmjs.com/package/asterisk-manager) (both mature; wrap behind your own interface regardless)
-- Queue: `@nestjs/bullmq` + BullMQ; Events: `@nestjs/event-emitter`
-- DB: Prisma (or TypeORM) + PostgreSQL; Redis via `ioredis`
-- WebSocket: `@nestjs/websockets` + `socket.io`
+- AMI: **hand-rolled** `AmiClient` (ADR-0002) — the npm libraries are unmaintained and can't run over the reverse tunnel.
+- Queue: `@nestjs/bullmq` + BullMQ; Events: `@nestjs/event-emitter`.
+- DB: **TypeORM** + PostgreSQL (migrations, not `synchronize`); Redis via `ioredis`.
+- WebSocket: `@nestjs/websockets` + **`ws`** (`@nestjs/platform-ws`). WebRTC softphone: self-hosted **JsSIP**. Metrics: `prom-client`.
 
 ---
 
-## 8. Open questions to resolve before Phase 2
+## 8. Open questions — resolution
 
-1. **Zoho PhoneBridge partner registration** — the full PhoneBridge API requires registering the integration with Zoho (marketplace/partner flow). Start the application early; the generic webhook path is the fallback while it's pending.
-2. **Salesforce org access** — need a Developer Edition org for Phase 4 development (free, but set it up early to build the Call Center XML + connected app).
-3. **CLI/CallerID policy per tenant** — what caller ID to present on click-to-call (trunk rules live on the PBX; the CTI just requests).
-4. **Data residency** — Saudi customers + Zoho `.sa` DC + recordings storage location; affects where the platform is hosted.
+1. **Zoho PhoneBridge partner registration** — *still open (operational).* The adapter is built and mock-verified; going live needs Zoho partner access + a refresh token, then reconcile payloads in `zoho-client.ts`. See [INSTALL §11](./docs/INSTALL.md).
+2. **Salesforce org access** — *still open (operational).* Adapter + Call Center XML built; needs a real connected app in the customer org.
+3. **CLI/CallerID policy per tenant** — resolved: the CTI presents the destination number on the agent leg and relies on the PBX's trunk rules for outbound CLI; per-tenant `originateChannelTemplate`/`originateContext` are in the registry.
+4. **Data residency** — resolved in design: Zoho DC base URLs are per-integration (`.com`/`.eu`/`.sa`), recordings never leave the CTI proxy; hosting location remains a deployment choice.
