@@ -87,6 +87,17 @@ export class PbxSupervisorService implements OnModuleInit, OnModuleDestroy {
     return connection.sendEventAction({ Action: 'CoreShowChannels' }, 'CoreShowChannelsComplete');
   }
 
+  /** Send a raw AMI action on a connection (e.g. ChanSpy Originate for coaching). */
+  async sendAction(connectionId: string, action: import('./ami-client').AmiMessage) {
+    const connection = this.connections.get(connectionId);
+    if (!connection) throw new Error(`No PBX connection ${connectionId}`);
+    return connection.sendAction(action);
+  }
+
+  hasConnection(connectionId: string): boolean {
+    return this.connections.has(connectionId);
+  }
+
   /** Click-to-call for a tenant: agent-leg-first on the tenant's PBX. */
   async originate(tenant: ResolvedTenant, agentExt: string, number: string): Promise<{ callRef: string }> {
     const connection = this.connections.get(tenant.entity.pbxConnectionId);

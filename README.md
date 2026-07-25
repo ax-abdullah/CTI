@@ -18,15 +18,16 @@ Multi-tenant CTI middleware connecting Asterisk/FreePBX to CRMs — click-to-cal
 
 ## Status
 
-Built and validated through **Phase 10**. What's implemented:
+Built and validated through **Phase 11** (all roadmap phases complete). What's implemented:
 
 - **Core (P1–2):** hand-rolled AMI connector, Linkedid call-state correlation → normalized `call.*` events, multi-tenant registry (shared-PBX routing, encrypted creds, scoped API keys), generic signed webhooks over durable BullMQ.
 - **CRMs (P3–4, P10):** Zoho PhoneBridge, Salesforce Open CTI, HubSpot, Microsoft Dynamics 365 — a tenant can enable several; logging fans out to each.
 - **Productization (P5):** reverse on-prem connector (no inbound firewall holes), recording proxy with signed URLs, agent presence, admin API + dashboard with hot-reload.
 - **Hardening (P6–9):** 60-test Jest suite + CI, TypeORM migrations, Redis-backed call-state + `CoreShowChannels` resync, per-tenant originate rate-limit, graceful shutdown, structured JSON logs, Prometheus `/metrics`, readiness/liveness probes, dead-letter alerting + retry UI, multi-stage Docker image + Caddy TLS/wss reverse proxy, recordings pulled over the reverse tunnel.
 - **WebRTC softphone (P10):** in-browser audio via self-hosted JsSIP (real two-way audio needs a WebRTC-configured PBX).
+- **Advanced telephony (P11):** ARI connector (Stasis → same normalized events), in-call coaching (spy/whisper/barge), queue/ACD wallboard, CRM-driven IVR routing.
 
-**Truly pending:** real Zoho/Salesforce/HubSpot/Dynamics org credentials (operational — see [INSTALL §11](./docs/INSTALL.md)); a WebRTC-enabled Asterisk for live media; and Phase 11 (ARI: in-call coaching, queue/ACD, CRM-driven IVR).
+**Truly pending (operational, not code):** real Zoho/Salesforce/HubSpot/Dynamics org credentials (see [INSTALL §11](./docs/INSTALL.md)); a WebRTC-enabled Asterisk for live browser media; and a Stasis/queue-configured PBX for live ARI coaching audio + queue wallboard stats.
 
 ## Selected internals
 

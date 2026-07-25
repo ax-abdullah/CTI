@@ -13,7 +13,7 @@ The platform is feature-complete but **not yet production-safe**: zero automated
 | **8 — Observability & operations** ✅ | Hardening | Structured logs; Prometheus `/metrics`; readiness/liveness probes; dead-letter alerting + retry UI | **Done** — /metrics scrapeable; a failed delivery alerts (structured WARN) and is retryable from the admin UI |
 | **9 — Secure deployment & real CRM go-live** ◑ | Hardening | TLS/`wss`; containerization; KMS secrets; real Zoho/Salesforce orgs; recordings over the tunnel | **Engineering done** (image + TLS proxy + recordings-over-tunnel verified); real Zoho/SF go-live is an operational step needing customer accounts (runbook in INSTALL §11) |
 | **10 — WebRTC softphone + more CRMs** ✅ | Expansion | In-browser audio (PJSIP WebRTC + JsSIP); HubSpot + Dynamics adapters | **Done** — HubSpot + Dynamics validated live (call → logged engagement/phonecall, multi-CRM fan-out); softphone loads JsSIP + fetches WebRTC config in-browser. Real two-way audio needs a wss-configured PBX |
-| **11 — Advanced telephony (ARI)** | Expansion | ARI connector; in-call coaching (whisper/barge/spy); queue/ACD; CRM-driven IVR | A supervisor whispers into a live call; queue stats stream to a wallboard |
+| **11 — Advanced telephony (ARI)** ✅ | Expansion | ARI connector; in-call coaching (whisper/barge/spy); queue/ACD; CRM-driven IVR | **Done** — coaching Originate executes live; ARI connector + queue aggregation + IVR routing unit/integration-tested (75 tests). Live coached audio/queues need a Stasis-configured PBX |
 
 ---
 
@@ -78,16 +78,20 @@ Agents were tied to a desk phone (the softphone only controlled calls; audio liv
 
 **Verified (60 tests + live):** HubSpot and Dynamics validated end-to-end against their mocks — a lab call produced a HubSpot Call engagement and a Dataverse phonecall, and since tenant-a runs Zoho+HubSpot and tenant-b Salesforce+Dynamics, this also confirmed **multi-CRM fan-out**. The softphone page loads self-hosted JsSIP (v3.13.8) and fetches valid WebRTC registration params in-browser; all five delivery queues are now surfaced in `/admin/overview`, `/metrics`, and the dead-letter tooling (a gap caught during validation and fixed). The one part still needing your infra: **real two-way browser audio** requires a WebRTC-configured Asterisk (wss transport + DTLS on 8089 — reference `webrtc.conf`); the client wiring is proven, the media path awaits a WebRTC PBX.
 
-### Phase 11 — Advanced telephony (ARI connector)
+### Phase 11 — Advanced telephony (ARI connector) ✅ Done
 
-AMI covers observe + originate but not media control. [ADR-0001](./adr/0001-ami-as-primary-control-surface.md) deliberately left room for an ARI connector; this phase adds it for the features that need it.
+AMI covers observe + originate but not media control. [ADR-0001](./adr/0001-ami-as-primary-control-surface.md) left room for an ARI connector; this phase adds it and the features that need it ([ADR-0011](./adr/0011-ari-advanced-telephony.md)).
 
-- **ARI connector** beside AMI — a Stasis app for calls that need media control, emitting the *same* normalized vocabulary so nothing downstream changes. It plugs in behind the connector abstraction alongside the direct/reverse AMI connections.
-- **In-call coaching:** whisper / barge / silent monitor (ChanSpy or ARI snoop) triggered from a supervisor view on the admin dashboard.
-- **Queue/ACD:** consume real-time queue events (`AgentCalled`/`AgentConnect`), expose queue member control, and stream wallboard data.
-- **CRM-data-driven IVR:** look the caller up in the CRM before the agent and route/prompt on the result.
+- **ARI connector** beside AMI — hand-rolled `AriClient` (REST + Stasis WS) + `AriSupervisorService` for `driver='ari'` connections. Stasis events translate to the *same* normalized `call.*` vocabulary, so nothing downstream changes. The AMI path is untouched.
+- **In-call coaching** — `POST /v1/supervisor/monitor` (spy / whisper / barge) via AMI **ChanSpy** (works on any AMI PBX; executes live in the lab) or ARI **snoop**.
+- **Queue/ACD** — `QueueStatsService` aggregates `app_queue` events; `GET /v1/queues` + `queue.stats` streamed over the softphone WebSocket to a wallboard.
+- **CRM-driven IVR** — `RoutingService.decide(number, contact)` turns a caller lookup into a routing decision (priority/queue/prompt/vars) the Stasis connector applies before continuing in the dialplan.
 
-**Exit:** a supervisor whispers into a live call; queue statistics stream to a wallboard.
+**Verified:** coaching Originate executes live against the lab; ARI client (mock REST+WS), routing, coaching mapping, and queue aggregation are unit/integration-tested (75 tests). **Operator prerequisites for full live use:** registered SIP phones for coached audio, queues configured for live wallboard stats, and `http.conf`/`ari.conf` + a Stasis dialplan for the ARI path.
+
+---
+
+**All roadmap phases (0–11) are complete.**
 
 ---
 

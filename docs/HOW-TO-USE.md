@@ -136,6 +136,30 @@ node connector-agent.mjs
 
 It dials OUT over 443/TLS (no inbound firewall holes), tunnels AMI, and serves recordings on a second channel. `/health` then shows the connection `connected`. Run it under systemd (unit in [INSTALL §8](./INSTALL.md)).
 
+## 11b. Supervise & coach (Phase 11)
+
+**In-call coaching** — listen to, whisper to, or barge an agent's live call:
+
+```bash
+curl -X POST {{baseUrl}}/v1/supervisor/monitor \
+  -H "X-API-Key: $TENANT_A_KEY" -H 'Content-Type: application/json' \
+  -d '{"supervisorExt":"1002","agentExt":"1001","mode":"whisper"}'   # mode: spy | whisper | barge
+```
+
+The supervisor's phone rings, then joins the agent's call in the chosen mode (AMI ChanSpy, or ARI snoop on ARI connections). Both extensions must belong to the tenant. Coached audio needs registered SIP phones.
+
+**Queue wallboard** — live ACD stats:
+
+```bash
+curl {{baseUrl}}/v1/queues -H "X-API-Key: $TENANT_A_KEY"
+# → { "queues": [ { "queue":"support", "waiting":2, "answered":10, "abandoned":1,
+#                   "membersAvailable":3, "avgHoldSec":18, "avgTalkSec":95 } ] }
+```
+
+For a live wallboard, subscribe to the softphone WebSocket (§3) — `queue.stats` messages stream as queues change. Requires queues configured on the PBX.
+
+**ARI / CRM-driven IVR** — register a `driver:"ari"` PBX connection (admin API, `ariApp` = your Stasis app), point the dialplan's inbound context at `Stasis(<app>)`, and calls entering it are looked up and routed (priority/queue/prompt via channel vars) before continuing in the dialplan. `GET /health/ari` shows ARI connection status.
+
 ## 12. Operate & monitor
 
 | Task | How |

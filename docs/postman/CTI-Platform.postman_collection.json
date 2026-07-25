@@ -80,6 +80,71 @@
               "body": "cti_pbx_connection_up{connection=\"lab-asterisk\",mode=\"direct\"} 1\ncti_calls_total{tenant=\"tenant-a\",direction=\"outbound\",disposition=\"ANSWERED\"} 1\ncti_queue_jobs{queue=\"hubspot\",state=\"completed\"} 1"
             }
           ]
+        },
+        {
+          "name": "ARI (Stasis) connection status",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/health/ari", "host": ["{{baseUrl}}"], "path": ["health", "ari"] },
+            "description": "Status of driver='ari' connections (empty unless an ARI PBX connection is registered)."
+          },
+          "response": [
+            {
+              "name": "no ARI connections", "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/health/ari", "host": ["{{baseUrl}}"], "path": ["health", "ari"] } },
+              "status": "OK", "code": 200, "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{ \"connections\": [] }"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Supervisor & Queues (Phase 11)",
+      "item": [
+        {
+          "name": "Coach a call (spy / whisper / barge)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{tenantApiKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"supervisorExt\": \"1002\",\n  \"agentExt\": \"1001\",\n  \"mode\": \"whisper\"\n}" },
+            "url": { "raw": "{{baseUrl}}/v1/supervisor/monitor", "host": ["{{baseUrl}}"], "path": ["v1", "supervisor", "monitor"] },
+            "description": "mode: spy (listen) | whisper (talk to the agent only) | barge (join). Rings the supervisor, then joins the agent's live call. Both extensions must belong to the tenant. Optional agentChannelId for ARI snoop."
+          },
+          "response": [
+            {
+              "name": "Coaching", "originalRequest": { "method": "POST", "url": { "raw": "{{baseUrl}}/v1/supervisor/monitor", "host": ["{{baseUrl}}"], "path": ["v1", "supervisor", "monitor"] } },
+              "status": "Created", "code": 201, "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{ \"status\": \"coaching\", \"mode\": \"whisper\", \"agentExt\": \"1001\" }"
+            },
+            {
+              "name": "Not a tenant extension", "originalRequest": { "method": "POST", "url": { "raw": "{{baseUrl}}/v1/supervisor/monitor", "host": ["{{baseUrl}}"], "path": ["v1", "supervisor", "monitor"] } },
+              "status": "Bad Request", "code": 400, "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{ \"message\": \"supervisorExt and agentExt must be extensions of this tenant\", \"error\": \"Bad Request\", \"statusCode\": 400 }"
+            }
+          ]
+        },
+        {
+          "name": "Queue wallboard",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{tenantApiKey}}" }],
+            "url": { "raw": "{{baseUrl}}/v1/queues", "host": ["{{baseUrl}}"], "path": ["v1", "queues"] },
+            "description": "Live ACD stats for the tenant's PBX. Also streamed as `queue.stats` on the softphone WebSocket. Empty until queues are configured on the PBX."
+          },
+          "response": [
+            {
+              "name": "One queue", "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/v1/queues", "host": ["{{baseUrl}}"], "path": ["v1", "queues"] } },
+              "status": "OK", "code": 200, "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"queues\": [\n    { \"queue\": \"support\", \"waiting\": 2, \"answered\": 10, \"abandoned\": 1, \"membersTotal\": 4, \"membersAvailable\": 3, \"avgHoldSec\": 18, \"avgTalkSec\": 95 }\n  ]\n}"
+            }
+          ]
         }
       ]
     },

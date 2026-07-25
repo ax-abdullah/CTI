@@ -68,6 +68,11 @@ export class TenantRegistryService implements OnModuleInit {
     return this.connections.find((c) => c.id === id);
   }
 
+  /** Tenant slugs served by a PBX connection (for wallboard broadcast). */
+  tenantSlugsForConnection(connectionId: string): string[] {
+    return this.tenants.filter((t) => t.entity.pbxConnectionId === connectionId).map((t) => t.entity.slug);
+  }
+
   /** Resolves a reverse-mode connection from its connector token. */
   connectionByConnectorToken(token: string): PbxConnection | undefined {
     const hash = CryptoService.hashApiKey(token);

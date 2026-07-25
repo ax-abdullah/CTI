@@ -18,6 +18,7 @@ import { SoftphoneModule } from './softphone/softphone.module';
 import { PresenceModule } from './presence/presence.module';
 import { RecordingsModule } from './recordings/recordings.module';
 import { ObservabilityModule } from './observability/observability.module';
+import { TelephonyModule } from './telephony/telephony.module';
 import { AdminModule } from './admin/admin.module';
 import { ApiModule } from './api/api.module';
 
@@ -73,6 +74,7 @@ import { ApiModule } from './api/api.module';
     PresenceModule,
     RecordingsModule,
     ObservabilityModule,
+    TelephonyModule,
     AdminModule,
     ApiModule,
   ],

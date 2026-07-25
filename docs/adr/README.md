@@ -14,3 +14,4 @@ Decisions that shaped the CTI platform, in the order they were made. Format: Con
 | [0008](0008-signed-capability-urls-for-recordings.md) | Signed capability URLs for recordings | Accepted |
 | [0009](0009-tls-terminating-reverse-proxy-deployment.md) | TLS-terminating reverse proxy + containerized deployment | Accepted |
 | [0010](0010-webrtc-softphone-and-crm-expansion.md) | WebRTC softphone (self-hosted JsSIP) + HubSpot/Dynamics adapters | Accepted |
+| [0011](0011-ari-advanced-telephony.md) | ARI connector + advanced telephony (coaching, queues, CRM-driven IVR) | Accepted |

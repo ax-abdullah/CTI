@@ -11,6 +11,8 @@ import {
   CallRingingEvent,
 } from '../call-state/normalized-events';
 import { AGENT_STATE_EVENT, AgentStateEvent } from '../presence/presence.service';
+import { QUEUE_STATS_EVENT } from '../telephony/queue-stats.service';
+import { TenantRegistryService } from '../tenants/tenant-registry.service';
 import { verifyAgentToken } from './agent-token.util';
 
 interface AgentSocket {
@@ -33,7 +35,10 @@ export class SoftphoneGateway implements OnGatewayConnection, OnGatewayDisconnec
   private readonly clients = new Map<WebSocket, AgentSocket>();
   private readonly callRoutes = new Map<string, { tenantSlug: string; ext: string }>();
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly registry: TenantRegistryService,
+  ) {}
 
   handleConnection(socket: WebSocket, request: IncomingMessage): void {
     const url = new URL(request.url ?? '/', 'http://localhost');
@@ -80,6 +85,17 @@ export class SoftphoneGateway implements OnGatewayConnection, OnGatewayDisconnec
     const payload = JSON.stringify({ type: AGENT_STATE_EVENT, ...event });
     for (const client of this.clients.values()) {
       if (client.tenantSlug === event.tenantId) client.socket.send(payload);
+    }
+  }
+
+  /** Queue wallboard: stream to every socket of the tenants on that PBX. */
+  @OnEvent(QUEUE_STATS_EVENT)
+  onQueueStats(stat: { connectionId: string }): void {
+    const slugs = this.registry.tenantSlugsForConnection(stat.connectionId);
+    if (!slugs.length) return;
+    const payload = JSON.stringify({ type: QUEUE_STATS_EVENT, ...stat });
+    for (const client of this.clients.values()) {
+      if (slugs.includes(client.tenantSlug)) client.socket.send(payload);
     }
   }
 

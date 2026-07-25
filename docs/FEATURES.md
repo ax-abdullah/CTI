@@ -22,7 +22,8 @@ Every feature of the CTI platform, what it does, how it works, and how to use it
 | 14 | [Observability & deployment](#14-observability--deployment) | `/metrics`, `/health/live`+`/ready`, JSON logs, Docker + Caddy TLS | Phase 6–9 |
 | 15 | [WebRTC softphone](#15-webrtc-softphone-phase-10) | in-browser audio via self-hosted JsSIP | Phase 10 |
 | 16 | [HubSpot & Dynamics adapters](#16-hubspot--dynamics-adapters-phase-10) | Call engagement / phonecall activity | Phase 10 |
-| 17 | [Security model](#17-security-model) | cross-cutting | all |
+| 17 | [Advanced telephony (ARI)](#17-advanced-telephony-ari--phase-11) | coaching, queue wallboard, CRM-driven IVR | Phase 11 |
+| 18 | [Security model](#18-security-model) | cross-cutting | all |
 
 ---
 
@@ -142,7 +143,16 @@ Two more CRMs behind the same normalized-event bus, following the Zoho/Salesforc
 
 A tenant may enable several CRMs at once; logging fans out to each enabled adapter.
 
-## 17. Security model
+## 17. Advanced telephony (ARI) — Phase 11
+
+Beyond observe + originate, on PBXs you control ([ADR-0011](./adr/0011-ari-advanced-telephony.md)):
+
+- **ARI connector** — a `driver='ari'` PbxConnection is managed alongside AMI ([src/pbx-connector/ari/](../src/pbx-connector/ari/)): a hand-rolled `AriClient` (REST + Stasis WebSocket) and `AriSupervisorService`. Stasis events emit the **same** normalized `call.*` vocabulary, so webhooks/CRMs/metrics work unchanged. `GET /health/ari` shows connection status.
+- **In-call coaching** — `POST /v1/supervisor/monitor {supervisorExt, agentExt, mode}` (tenant key): `spy` (listen), `whisper` (talk to the agent only), `barge` (join). Backed by AMI **ChanSpy** (any AMI PBX) or ARI **snoop**.
+- **Queue/ACD wallboard** — `GET /v1/queues` (tenant key) and a `queue.stats` stream on the softphone WebSocket: waiting callers, answered/abandoned, avg hold/talk, available members — aggregated from `app_queue` events.
+- **CRM-driven IVR** — on an inbound Stasis call, the caller is looked up and `RoutingService` decides priority/queue/prompt and sets channel variables before handing the call back to the dialplan.
+
+## 18. Security model
 
 - AMI users scoped to `read=call,cdr,dialplan,dtmf` / `write=call,originate`; never `write=system`; 5038 never public.
 - Secrets at rest: AES-256-GCM under `CREDS_KEY`; keys/tokens hashed (sha256) with one-time disclosure.

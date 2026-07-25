@@ -10,7 +10,7 @@
 > - **AMI client is hand-rolled**, not `asterisk-ami-client`/`asterisk-manager` (the npm libraries are unmaintained; the protocol is ~150 lines — [ADR-0002](./docs/adr/0002-hand-rolled-ami-client.md)). It runs over any transport, which the reverse connector reuses.
 > - **CRM adapters are one module per CRM** (`ZohoModule`, `SalesforceModule`, `HubSpotModule`, `DynamicsModule`), not a single `CrmAdaptersModule` with a `CrmAdapter` interface — each follows the same dispatcher/processor/queue shape ([ADR-0006](./docs/adr/0006-crm-adapter-models.md), [ADR-0010](./docs/adr/0010-webrtc-softphone-and-crm-expansion.md)).
 > - **ORM is TypeORM** (with real migrations, not `synchronize`); **WebSockets use `ws`** (`@nestjs/platform-ws`), not socket.io; **AMI secrets/CRM tokens are AES-256-GCM** under one master key (`CryptoService`), not libsodium.
-> - **Reverse on-prem connector** (customer dials out; no inbound holes) and **recordings pulled over that tunnel** are built ([ADR-0007](./docs/adr/0007-reverse-onprem-connector.md)/[0008](./docs/adr/0008-signed-capability-urls-for-recordings.md)/[0009](./docs/adr/0009-tls-terminating-reverse-proxy-deployment.md)). **WebRTC softphone** (in-browser audio via self-hosted JsSIP) is built; real two-way audio needs a WebRTC-configured PBX. **ARI** remains the one deferred surface (Phase 11).
+> - **Reverse on-prem connector** (customer dials out; no inbound holes) and **recordings pulled over that tunnel** are built ([ADR-0007](./docs/adr/0007-reverse-onprem-connector.md)/[0008](./docs/adr/0008-signed-capability-urls-for-recordings.md)/[0009](./docs/adr/0009-tls-terminating-reverse-proxy-deployment.md)). **WebRTC softphone** (in-browser audio via self-hosted JsSIP) is built; real two-way audio needs a WebRTC-configured PBX. The **ARI connector** and advanced telephony (in-call coaching, queue/ACD wallboard, CRM-driven IVR) are built ([ADR-0011](./docs/adr/0011-ari-advanced-telephony.md)) — the door ADR-0001 left open; live coached audio/queues need a Stasis-configured PBX. **All roadmap phases 0–11 are complete.**
 
 ---
 
@@ -326,7 +326,7 @@ Recording links: FreePBX stores recordings under `/var/spool/asterisk/monitor/..
 | **4 — Salesforce Open CTI** | Softphone page + Call Center XML, `SoftphoneGateway` WebSocket, `searchAndScreenPop`, click-to-dial, Task logging | Same three features working inside Salesforce Lightning |
 | **5 — Productization** | Reverse on-prem connector, recording proxy, admin UI, per-tenant dashboards, presence (`agent.state`) | Installable at a customer without inbound firewall holes |
 
-> **What's next:** Phases 0–10 are complete (and validated). The full forward roadmap and per-phase status live in [docs/ROADMAP.md](./docs/ROADMAP.md); only **Phase 11 (ARI advanced telephony)** remains.
+> **What's next:** **all roadmap phases 0–11 are complete** (and validated). Per-phase status: [docs/ROADMAP.md](./docs/ROADMAP.md).
 
 ### Libraries used (as built)
 

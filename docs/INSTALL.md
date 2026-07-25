@@ -83,7 +83,7 @@ SEED_PBX_MODE=reverse npm run seed # reverse mode (prints the connector token)
 
 **Real onboarding** uses the admin API instead (see Swagger `/docs`, tag *Admin*):
 
-1. `POST /admin/pbx-connections` — register the customer PBX (`mode: reverse` for NAT'd sites; save the one-time `connectorToken`)
+1. `POST /admin/pbx-connections` — register the customer PBX (`mode: reverse` for NAT'd sites; save the one-time `connectorToken`). For advanced telephony, add a second connection with `driver: "ari"` (`host:port` = ARI HTTP, `ariApp` = your Stasis app) — see §13.
 2. `POST /admin/tenants` — save the one-time `apiKey`
 3. `POST /admin/agents` — one per extension, with `crmRefs` (`{zoho, salesforce, hubspot, dynamics}` user IDs) and optional WebRTC SIP creds
 4. `POST /admin/integrations` — any of `zoho` / `salesforce` / `hubspot` / `dynamics` (a tenant may enable several; call logging fans out to each)
@@ -181,6 +181,12 @@ The mock servers (`scripts/mock-*.mjs`) prove the contract; going live needs the
 3. **HubSpot** — install a HubSpot app with the calling + engagement scopes, complete the OAuth install to obtain a refresh token, and `POST /admin/integrations` with `type: hubspot`. Embed the softphone via the Calling Extensions SDK for pop/click-to-call.
 4. **Dynamics 365** — register an Azure AD app + Dataverse application user, and `POST /admin/integrations` with `type: dynamics` (`aadTenantId`, `orgUrl`, `clientId`/`clientSecret`). Configure the Channel Integration Framework panel for pop/click-to-call.
 5. Run `POST /admin/reload`, place a test call, and confirm the screen pop, click-to-dial, and logged activity in each live org.
+
+## 13. Advanced telephony (optional — ARI, coaching, queues, IVR)
+
+- **In-call coaching** works on any AMI PBX today: `POST /v1/supervisor/monitor {supervisorExt, agentExt, mode}` (spy/whisper/barge) uses ChanSpy. Needs registered SIP phones for audio.
+- **Queue wallboard**: define Asterisk queues; `GET /v1/queues` and the `queue.stats` WebSocket stream then populate.
+- **ARI connector + CRM-driven IVR** (PBXs you control): enable Asterisk's HTTP server + ARI (`http.conf`: `enabled=yes`; `ari.conf`: an ARI user), point an inbound dialplan context at `Stasis(<app>)`, then register a `driver:"ari"` PBX connection (`host:port` = ARI HTTP, `username`/`secret` = the ARI user, `ariApp` = `<app>`). Calls entering Stasis emit the normal `call.*` events and get looked-up + routed. `GET /health/ari` shows status. See [ADR-0011](./adr/0011-ari-advanced-telephony.md).
 
 ## 12. Production checklist
 

@@ -107,6 +107,13 @@ Expected: `401 Invalid API key`. ☐
 **I1 — Page + config.** Open `/softphone?token=<agentToken>`. Expected: page loads (JsSIP served from `/vendor/jssip.js`), control WS shows `live`. Click **Enable browser audio** → status leaves `audio off`; `GET /v1/softphone/webrtc-config` returns wssUrl/sipUri/authUser/password/iceServers. ☐
 **I2 — Media (needs a WebRTC PBX).** With a wss+DTLS-configured Asterisk, register and place a call. Expected: `audio live`, two-way audio in the tab. *(Skip if the lab PBX has no WebRTC transport — the client wiring is covered by I1.)* ☐
 
+## L. Advanced telephony (Phase 11)
+
+**L1 — Coaching endpoint validates + executes.** `POST /v1/supervisor/monitor {supervisorExt:"1002",agentExt:"1001",mode:"whisper"}` (tenant key). Expected: `{status:"coaching",mode:"whisper",...}` and an `AMI whisper on 1001 by 1002` log line; a non-tenant extension (e.g. `9999`) → 400. *(Audible coaching needs registered SIP phones.)* ☐
+**L2 — Queue wallboard endpoint.** `GET /v1/queues` (tenant key). Expected: `{queues:[…]}` — empty until queues exist on the PBX; with a configured queue, waiting/answered/members populate and `queue.stats` messages arrive on the softphone WS. ☐
+**L3 — ARI status.** `GET /health/ari`. Expected: `{connections:[…]}` — one entry per `driver:"ari"` connection (empty by default). ☐
+**L4 — ARI connector (needs a Stasis PBX).** Register a `driver:"ari"` connection, point an inbound context at `Stasis(<app>)`, place a call. Expected: normal `call.ringing/answered/ended` events (ARI-sourced) and an IVR routing log setting `CTI_QUEUE`/`CTI_PRIORITY`. *(Skip without http.conf/ari.conf + Stasis dialplan.)* ☐
+
 ## J. Admin & onboarding
 
 **J1 — Create a tenant end-to-end.** Via admin API: `pbx-connections` → `tenants` → `agents` → `integrations` → `reload`. Expected: each returns one-time credentials where applicable; after reload, the new tenant's key works on `/v1/calls/originate` and appears in `/admin/overview`. ☐

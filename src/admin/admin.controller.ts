@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { Repository } from 'typeorm';
 import { CallStateService } from '../call-state/call-state.service';
 import { PbxSupervisorService } from '../pbx-connector/pbx-supervisor.service';
+import { AriSupervisorService } from '../pbx-connector/ari/ari-supervisor.service';
 import { CryptoService } from '../tenants/crypto.service';
 import { Agent } from '../tenants/entities/agent.entity';
 import { CrmIntegration, CrmType } from '../tenants/entities/crm-integration.entity';
@@ -44,6 +45,7 @@ export class AdminController {
   constructor(
     private readonly registry: TenantRegistryService,
     private readonly supervisor: PbxSupervisorService,
+    private readonly ariSupervisor: AriSupervisorService,
     private readonly callState: CallStateService,
     private readonly crypto: CryptoService,
     @InjectRepository(PbxConnection) private readonly connectionRepo: Repository<PbxConnection>,
@@ -101,6 +103,7 @@ export class AdminController {
   async reload() {
     await this.registry.onModuleInit();
     this.supervisor.reload();
+    this.ariSupervisor.reload();
     return { status: 'reloaded' };
   }
 
