@@ -252,7 +252,7 @@ export class CallStateService implements BeforeApplicationShutdown {
       endedAt: endedAt.toISOString(),
       callRef: call.callRef,
       recordingUrl: call.recordingPath
-        ? this.recordings.signedUrlFor(call.recordingPath)
+        ? this.recordings.signedUrlFor(call.recordingPath, call.connectionId)
         : undefined,
     };
     this.bus.emit(CALL_EVENTS.ended, event);

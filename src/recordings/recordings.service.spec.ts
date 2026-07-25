@@ -2,13 +2,18 @@ import { ConfigService } from '@nestjs/config';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ConnectorFileService } from '../connector-files/connector-file.service';
+import { TenantRegistryService } from '../tenants/tenant-registry.service';
 import { RecordingsService } from './recordings.service';
 
 const SECRET = 'recordings-url-secret';
 const BASE_URL = 'http://cti.test';
 
-function makeService(dir: string): RecordingsService {
-  const values: Record<string, string> = {
+function makeService(dir: string | undefined, opts: {
+  registry?: Partial<TenantRegistryService>;
+  files?: Partial<ConnectorFileService>;
+} = {}): RecordingsService {
+  const values: Record<string, string | undefined> = {
     RECORDINGS_BASE_DIR: dir,
     RECORDINGS_URL_SECRET: SECRET,
     PUBLIC_BASE_URL: BASE_URL,
@@ -17,10 +22,11 @@ function makeService(dir: string): RecordingsService {
     get: (k: string) => values[k],
     getOrThrow: (k: string) => values[k],
   } as unknown as ConfigService;
-  return new RecordingsService(config);
+  const registry = { connectionById: () => undefined, ...opts.registry } as unknown as TenantRegistryService;
+  const files = { fetch: async () => null, ...opts.files } as unknown as ConnectorFileService;
+  return new RecordingsService(config, registry, files);
 }
 
-/** Pull the `:token` path segment out of a signed recording URL. */
 const tokenOf = (url: string) => url.slice(`${BASE_URL}/v1/recordings/`.length);
 
 describe('RecordingsService', () => {
@@ -32,50 +38,70 @@ describe('RecordingsService', () => {
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it('signs a URL that opens the right file', async () => {
+  it('signs a URL that opens the right file from the local mount', async () => {
     const svc = makeService(dir);
     const url = svc.signedUrlFor('/var/spool/asterisk/monitor/1784589088.0.wav')!;
     expect(url.startsWith(`${BASE_URL}/v1/recordings/`)).toBe(true);
 
-    const opened = svc.open(tokenOf(url));
+    const opened = await svc.open(tokenOf(url));
     expect(opened).not.toBeNull();
     expect(opened!.file).toBe('1784589088.0.wav');
-    // Drain the stream so the file handle closes before afterEach removes it.
     const body = await new Promise<string>((resolve) => {
-      let data = '';
-      opened!.stream.on('data', (c) => (data += c));
-      opened!.stream.on('close', () => resolve(data));
+      let d = '';
+      opened!.stream.on('data', (c) => (d += c));
+      opened!.stream.on('close', () => resolve(d));
     });
     expect(body).toContain('fake-wav-bytes');
   });
 
-  it('rejects a tampered token', () => {
-    const svc = makeService(dir);
-    const token = tokenOf(svc.signedUrlFor('1784589088.0.wav')!);
-    expect(svc.open(`${token}x`)).toBeNull();
+  it('fetches over the tunnel for a reverse connection (no local mount)', async () => {
+    const svc = makeService(undefined, {
+      registry: { connectionById: () => ({ id: 'conn-x', mode: 'reverse' }) as any },
+      files: { fetch: async (id: string, file: string) => Buffer.from(`bytes-of-${file}`) },
+    });
+    const url = svc.signedUrlFor('/remote/path/rec.wav', 'conn-x')!;
+    const opened = await svc.open(tokenOf(url));
+    expect(opened).not.toBeNull();
+    const body = await new Promise<string>((resolve) => {
+      let d = '';
+      opened!.stream.on('data', (c) => (d += c));
+      opened!.stream.on('close', () => resolve(d));
+    });
+    expect(body).toBe('bytes-of-rec.wav');
   });
 
-  it('rejects an expired token', () => {
+  it('returns null when the tunnel has no file', async () => {
+    const svc = makeService(undefined, {
+      registry: { connectionById: () => ({ id: 'conn-x', mode: 'reverse' }) as any },
+      files: { fetch: async () => null },
+    });
+    const url = svc.signedUrlFor('rec.wav', 'conn-x')!;
+    expect(await svc.open(tokenOf(url))).toBeNull();
+  });
+
+  it('rejects a tampered token', async () => {
     const svc = makeService(dir);
-    const url = svc.signedUrlFor('1784589088.0.wav')!;
-    const token = tokenOf(url);
-    // Advance well past the 15-minute TTL.
+    const token = tokenOf(svc.signedUrlFor('1784589088.0.wav')!);
+    expect(await svc.open(`${token}x`)).toBeNull();
+  });
+
+  it('rejects an expired token', async () => {
+    const svc = makeService(dir);
+    const token = tokenOf(svc.signedUrlFor('1784589088.0.wav')!);
     jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 16 * 60_000);
-    expect(svc.open(token)).toBeNull();
+    expect(await svc.open(token)).toBeNull();
     jest.restoreAllMocks();
   });
 
-  it('is traversal-proof: only the basename is honored', () => {
+  it('is traversal-proof: only the basename is honored', async () => {
     const svc = makeService(dir);
-    // A signed token for a path that basename()s to a real file still only
-    // resolves that basename inside the base dir — never an escape.
     const url = svc.signedUrlFor('../../../../etc/passwd')!;
-    expect(svc.open(tokenOf(url))).toBeNull();
+    expect(await svc.open(tokenOf(url))).toBeNull();
   });
 
-  it('is unconfigured (no signed URLs) when env is incomplete', () => {
+  it('is unconfigured (no signed URLs) without secret + base url', () => {
     const config = { get: () => undefined, getOrThrow: () => '' } as unknown as ConfigService;
-    const svc = new RecordingsService(config);
+    const svc = new RecordingsService(config, {} as any, {} as any);
     expect(svc.configured).toBe(false);
     expect(svc.signedUrlFor('x.wav')).toBeUndefined();
   });

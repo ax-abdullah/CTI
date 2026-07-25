@@ -1,0 +1,14 @@
+node_modules
+dist
+.git
+.env
+*.log
+coverage
+docs
+scripts
+test
+**/*.spec.ts
+.github
+Dockerfile
+.dockerignore
+docker-compose*.yml

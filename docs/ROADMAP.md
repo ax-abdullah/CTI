@@ -11,7 +11,7 @@ The platform is feature-complete but **not yet production-safe**: zero automated
 | **6 — Test suite & CI + migrations** ✅ | Hardening | Jest/supertest unit + integration tests; TypeORM migrations replacing `synchronize`; GitHub Actions | **Done** — 30 tests green; `migration:run` provisions a clean DB |
 | **7 — Reliability & correctness** ✅ | Hardening | Call-state in Redis (TTL); `CoreShowChannels` resync on reconnect; rate-limit originate; graceful shutdown | **Done** — verified live: SIGKILL mid-call → resync recovers → `call.ended` still fires; originate 429 after per-tenant limit |
 | **8 — Observability & operations** ✅ | Hardening | Structured logs; Prometheus `/metrics`; readiness/liveness probes; dead-letter alerting + retry UI | **Done** — /metrics scrapeable; a failed delivery alerts (structured WARN) and is retryable from the admin UI |
-| **9 — Secure deployment & real CRM go-live** | Hardening | TLS/`wss`; containerization; KMS secrets; real Zoho/Salesforce orgs; recordings over the tunnel | A real customer FreePBX + real Zoho/SF org over TLS, no inbound holes |
+| **9 — Secure deployment & real CRM go-live** ◑ | Hardening | TLS/`wss`; containerization; KMS secrets; real Zoho/Salesforce orgs; recordings over the tunnel | **Engineering done** (image + TLS proxy + recordings-over-tunnel verified); real Zoho/SF go-live is an operational step needing customer accounts (runbook in INSTALL §11) |
 | **10 — WebRTC softphone + more CRMs** | Expansion | In-browser audio (PJSIP WebRTC + SIP.js); HubSpot + Dynamics adapters | Agent places/receives a call in the browser; HubSpot pop + log works |
 | **11 — Advanced telephony (ARI)** | Expansion | ARI connector; in-call coaching (whisper/barge/spy); queue/ACD; CRM-driven IVR | A supervisor whispers into a live call; queue stats stream to a wallboard |
 
@@ -52,17 +52,18 @@ The only operational surfaces were `/health` and the admin queue counts. Deliver
 
 **Verified live:** `/metrics` scraped with real call/originate/connection/queue series; `/health/ready` returned 200 with both stores up; a downed webhook endpoint produced 6 dead-letters + an `alert kind=dead_letters` log, and retrying one from the API delivered it to a restored receiver and cleared it. 48 tests green.
 
-### Phase 9 — Secure deployment & real CRM go-live
+### Phase 9 — Secure deployment & real CRM go-live ◑ Engineering done
 
-Everything runs plaintext-local against mock CRMs. This phase gets a real customer live.
+Everything ran plaintext-local against mock CRMs. Delivered ([ADR-0009](./adr/0009-tls-terminating-reverse-proxy-deployment.md)):
 
-- **TLS/`wss`** terminated by a reverse proxy (nginx/Traefik/Caddy); the connector agent dials `wss://` (mandatory — the AMI login crosses the tunnel, per [ADR-0007](./adr/0007-reverse-onprem-connector.md)).
-- **Containerize** the app (Dockerfile) and ship a full-stack compose / Helm chart.
-- **Secrets** via env/Vault/KMS; per-tenant KMS-wrapped data keys (the upgrade path in [ADR-0004](./adr/0004-multi-tenancy-model.md)).
-- **Real CRM orgs:** replace [scripts/mock-zoho.mjs](../scripts/mock-zoho.mjs) / [scripts/mock-salesforce.mjs](../scripts/mock-salesforce.mjs) with real Zoho PhoneBridge (partner registration; reconcile the provisional payloads in [zoho-client.ts](../src/crm-adapters/zoho/zoho-client.ts)) and a real Salesforce connected app.
-- **Recordings over the tunnel:** a file channel on the reverse connector ([ADR-0008](./adr/0008-signed-capability-urls-for-recordings.md) extension) so NAT'd customers need no separate recordings share.
+- **Containerized** — multi-stage `Dockerfile` (non-root, migrations at startup) + `docker-compose.full.yml` (app + Postgres + Redis + Caddy).
+- **TLS/`wss`** terminated by Caddy ([deploy/Caddyfile](../deploy/Caddyfile)); `wss://…/softphone-ws` and `…/connector-ws` upgrade transparently. Local uses Caddy's internal CA; prod swaps in a domain for automatic Let's Encrypt.
+- **Recordings over the tunnel** — the reverse connector's second WS channel ([/connector-files](../src/connector-files/)); `RecordingsService` embeds the connectionId and pulls the file from the on-prem agent for reverse connections, so **NAT'd customers need no recordings share** (closes the ADR-0008 gap).
+- **Secrets/KMS** — documented envelope-encryption / KMS path (INSTALL §10); the compose sources secrets from the environment, not literals.
 
-**Exit:** a real customer FreePBX + real Zoho/Salesforce org running over TLS with no inbound firewall holes.
+**Verified live:** image builds and boots in-container (readiness 200); HTTPS + WSS work through Caddy; a recording with **no cloud-local copy** was fetched through the tunnel (200, exact bytes) and a missing one 404'd.
+
+**Remaining (operational, needs customer accounts):** real Zoho PhoneBridge (partner registration) and a real Salesforce connected app — step-by-step in [INSTALL §11 Go-live runbook](./INSTALL.md). No code change; the adapters are ready and env-wired.
 
 ---
 

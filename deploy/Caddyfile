@@ -1,0 +1,26 @@
+# TLS termination + reverse proxy for the CTI platform.
+#
+# Local/dev: `tls internal` uses Caddy's own CA (self-signed) — curl with -k.
+# Production: replace `localhost` with your domain and delete the `tls internal`
+# line; Caddy then provisions a real Let's Encrypt certificate automatically.
+#
+# reverse_proxy transparently upgrades WebSocket connections, so /softphone-ws
+# and /connector-ws (the reverse on-prem AMI tunnel) work over wss with no
+# extra config.
+{
+	auto_https disable_redirects
+}
+
+localhost:443 {
+	tls internal
+
+	# Long-lived tunnels (reverse connector, softphone) must not be cut off.
+	reverse_proxy app:3000 {
+		flush_interval -1
+	}
+}
+
+# Plain HTTP → redirect to HTTPS (except ACME challenges).
+localhost:80 {
+	redir https://{host}{uri}
+}

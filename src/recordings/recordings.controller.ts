@@ -18,8 +18,8 @@ export class RecordingsController {
   @ApiParam({ name: 'token', description: 'Signed token from a call.ended recordingUrl' })
   @ApiProduces('audio/wav')
   @Get(':token')
-  fetch(@Param('token') token: string, @Res() res: Response) {
-    const opened = this.recordings.open(token);
+  async fetch(@Param('token') token: string, @Res() res: Response) {
+    const opened = await this.recordings.open(token);
     if (!opened) throw new NotFoundException('Invalid or expired recording link');
     res.setHeader('Content-Type', 'audio/wav');
     res.setHeader('Content-Disposition', `inline; filename="${opened.file}"`);

@@ -12,3 +12,4 @@ Decisions that shaped the CTI platform, in the order they were made. Format: Con
 | [0006](0006-crm-adapter-models.md) | Per-CRM adapter models: Zoho push vs Salesforce softphone vs webhooks | Accepted |
 | [0007](0007-reverse-onprem-connector.md) | Reverse on-prem connector over an outbound WebSocket tunnel | Accepted |
 | [0008](0008-signed-capability-urls-for-recordings.md) | Signed capability URLs for recordings | Accepted |
+| [0009](0009-tls-terminating-reverse-proxy-deployment.md) | TLS-terminating reverse proxy + containerized deployment | Accepted |

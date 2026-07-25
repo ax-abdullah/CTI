@@ -12,11 +12,16 @@
 //   AMI_HOST         default 127.0.0.1
 //   AMI_PORT         default 5038
 import { connect } from 'node:net';
+import { readFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 
 const CTI_URL = process.env.CTI_URL;
 const TOKEN = process.env.CONNECTOR_TOKEN;
 const AMI_HOST = process.env.AMI_HOST ?? '127.0.0.1';
 const AMI_PORT = Number(process.env.AMI_PORT ?? 5038);
+// Local recordings dir the agent serves over the file channel (basename-only).
+const RECORDINGS_DIR = process.env.AGENT_RECORDINGS_DIR ?? '/var/spool/asterisk/monitor';
+const FILE_URL = CTI_URL?.replace('/connector-ws', '/connector-files');
 if (!CTI_URL || !TOKEN) {
   console.error('CTI_URL and CONNECTOR_TOKEN are required');
   process.exit(1);
@@ -56,5 +61,38 @@ function session() {
   ws.onerror = () => {};
 }
 
+// --- file channel: serve recording files on demand (basename-only) --------
+let fileBackoffMs = 1000;
+function fileSession() {
+  const ws = new WebSocket(`${FILE_URL}?token=${encodeURIComponent(TOKEN)}`);
+  ws.onopen = () => {
+    fileBackoffMs = 1000;
+    log(`file channel up -> ${FILE_URL} (serving ${RECORDINGS_DIR})`);
+  };
+  ws.onmessage = async (event) => {
+    let req;
+    try { req = JSON.parse(event.data); } catch { return; }
+    if (req.t !== 'fetch') return;
+    const send = (m) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m)); };
+    try {
+      const buf = await readFile(join(RECORDINGS_DIR, basename(req.file)));
+      // chunk to stay under WS frame limits
+      for (let i = 0; i < buf.length; i += 48_000) {
+        send({ t: 'chunk', id: req.id, data: buf.subarray(i, i + 48_000).toString('base64') });
+      }
+      send({ t: 'eof', id: req.id });
+    } catch (err) {
+      send({ t: 'error', id: req.id, message: err.message });
+    }
+  };
+  ws.onclose = () => {
+    log(`file channel closed; reconnecting in ${fileBackoffMs / 1000}s`);
+    setTimeout(fileSession, fileBackoffMs);
+    fileBackoffMs = Math.min(fileBackoffMs * 2, 30_000);
+  };
+  ws.onerror = () => {};
+}
+
 log('CTI connector agent starting');
 session();
+fileSession();

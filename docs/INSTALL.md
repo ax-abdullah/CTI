@@ -121,6 +121,8 @@ AMI_HOST=127.0.0.1 AMI_PORT=5038 \
 node connector-agent.mjs
 ```
 
+Add `AGENT_RECORDINGS_DIR=/var/spool/asterisk/monitor` to let the agent serve call recordings over its file channel — then NAT'd sites need no shared recordings mount (the cloud pulls each file on demand over the same outbound WSS).
+
 The script is a single dependency-free file (`scripts/connector-agent.mjs`) — copy it to the site. It dials out over 443/TLS, reconnects with backoff, and never stores AMI credentials. Example systemd unit:
 
 ```ini
@@ -144,11 +146,33 @@ WantedBy=multi-user.target
 - **Salesforce:** create a connected app (refresh-token flow) in the customer org, import `GET /softphone/callcenter-definition.xml` under Setup → Call Center (replace `CTI_BASE_URL`), assign users, and store the connected-app credentials via `POST /admin/integrations`.
 - **Any other CRM:** consume the signed webhooks (`docs/FEATURES.md` §Generic webhooks) — reference receiver in `scripts/webhook-receiver.mjs`.
 
-## 10. Production checklist
+## 10. Container deployment (production-shaped)
 
-- [ ] TLS everywhere: terminate HTTPS/WSS in front of the app (reverse proxy); connector agents use `wss://`
-- [ ] Replace TypeORM `synchronize` (used by the lab seed) with migrations
-- [ ] Real Zoho/Salesforce orgs instead of the `scripts/mock-*.mjs` servers; reconcile PhoneBridge payloads with partner docs
-- [ ] Rotate `ADMIN_API_KEY`; keep `.env` out of git (already ignored) and consider a secrets manager
-- [ ] Rate-limit `/v1/calls/originate` (it makes phones ring)
-- [ ] Monitor `/health` and the queue `failed` counts on `/admin/overview`
+A multi-stage `Dockerfile` (non-root runtime, migrations at startup) and a full stack with a TLS-terminating reverse proxy ship in the repo:
+
+```bash
+docker compose -f docker-compose.full.yml up -d --build
+curl -k https://localhost:8443/health      # HTTPS via Caddy's internal CA
+```
+
+The stack is app + Postgres + Redis + [Caddy](../deploy/Caddyfile). Caddy terminates TLS and transparently upgrades WebSockets, so `wss://…/softphone-ws` and `wss://…/connector-ws` work with no app-side TLS. **Production:** replace `localhost` + `tls internal` in the Caddyfile with your domain — Caddy then provisions a Let's Encrypt certificate automatically — and inject secrets (`CREDS_KEY`, `*_SECRET`, `ADMIN_API_KEY`) from a real store (Docker/K8s secrets, Vault, or a cloud KMS) rather than literals. See [ADR-0009](./adr/0009-tls-terminating-reverse-proxy-deployment.md).
+
+**Secrets / KMS.** Credentials at rest are AES-256-GCM-encrypted under `CREDS_KEY` ([CryptoService](../src/tenants/crypto.service.ts)). For stronger isolation, wrap per-tenant data keys with a cloud KMS (the ADR-0004 upgrade path): store a KMS-encrypted data key per tenant and decrypt it via the KMS at use time, so the master key never lives in the process.
+
+## 11. Go-live runbook (real CRM orgs)
+
+The mock servers (`scripts/mock-*.mjs`) prove the contract; going live needs the customer's own accounts:
+
+1. **Zoho PhoneBridge** — apply for PhoneBridge partner access; create a Server-based OAuth client (correct DC: `.com`/`.eu`/`.sa`). Obtain a refresh token, then `POST /admin/integrations` with `type: zoho`, `config` (DC base URLs + `clientId`), and `secrets` (`clientSecret`, `refreshToken`, `callbackToken`). Register the click-to-call callback `POST {PUBLIC_BASE_URL}/v1/integrations/zoho/{tenantSlug}/click-to-call`. Reconcile payload field names in [zoho-client.ts](../src/crm-adapters/zoho/zoho-client.ts) against the partner docs (confined to that file + the mock).
+2. **Salesforce Open CTI** — in the customer org create a Connected App (enable the refresh-token flow), import `GET /softphone/callcenter-definition.xml` under Setup → Call Center (replace `CTI_BASE_URL` with your HTTPS URL), assign users, and `POST /admin/integrations` with `type: salesforce` + the connected-app credentials.
+3. Run `POST /admin/reload`, place a test call, and confirm the screen pop, click-to-dial, and logged activity in the live org.
+
+## 12. Production checklist
+
+- [x] TLS/WSS terminated by a reverse proxy (Caddy); connector agents dial `wss://`
+- [x] Migrations own the schema (`npm run migration:run`); no `synchronize` in the app
+- [x] Originate rate-limited per tenant; graceful shutdown on SIGTERM
+- [x] Metrics at `/metrics`; probes `/health/live` + `/health/ready`; dead-letter retry in `/admin`
+- [ ] Real Zoho/Salesforce orgs instead of the `scripts/mock-*.mjs` servers (§11)
+- [ ] Secrets from a manager/KMS; rotate `ADMIN_API_KEY`; `.env` out of git (already ignored)
+- [ ] Point Prometheus at `/metrics` and wire Alertmanager to the `failed`/`connection_down` series (or the structured `alert` logs)

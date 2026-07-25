@@ -1,0 +1,73 @@
+# Full production-shaped stack: app behind a TLS-terminating reverse proxy,
+# with its own Postgres and Redis. TLS/WSS is terminated by Caddy, so the app
+# speaks plain HTTP internally and is never exposed directly.
+#
+#   docker compose -f docker-compose.full.yml up -d --build
+#   curl -k https://localhost:8443/health
+#
+# Prod: replace `tls internal` in Caddyfile with a real domain (Caddy fetches
+# a Let's Encrypt cert automatically), and source secrets from a real store.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: cti
+      POSTGRES_PASSWORD: cti-dev
+      POSTGRES_DB: cti
+    volumes:
+      - full_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-U', 'cti']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - full_redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      PORT: '3000'
+      DATABASE_URL: postgres://cti:cti-dev@postgres:5432/cti
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
+      PUBLIC_BASE_URL: https://localhost:8443
+      LOG_FORMAT: json
+      # Secrets — in production inject from a secrets manager, not literals.
+      CREDS_KEY: ${CREDS_KEY:-0f2b9d4f8a1c6e3b7d5a9c8e2f4b6d8a1c3e5f7a9b1d3f5a7c9e1b3d5f7a9c1e}
+      SOFTPHONE_JWT_SECRET: ${SOFTPHONE_JWT_SECRET:-change-me}
+      RECORDINGS_URL_SECRET: ${RECORDINGS_URL_SECRET:-change-me}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-change-me}
+      RECORDINGS_BASE_DIR: /recordings
+    volumes:
+      - ./recordings:/recordings:ro
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on: [app]
+    ports:
+      - '8443:443'
+      - '8081:80'
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - full_caddydata:/data
+    restart: unless-stopped
+
+volumes:
+  full_pgdata:
+  full_redisdata:
+  full_caddydata:

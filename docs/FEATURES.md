@@ -107,7 +107,8 @@ Install at any customer **without inbound firewall holes**.
 ## 12. Call recordings
 
 - The engine captures `MIXMONITOR_FILENAME`; `call.ended` carries `recordingUrl` — a **15-minute signed capability URL**.
-- `GET /v1/recordings/:token` streams the wav from `RECORDINGS_BASE_DIR`. Tokens embed only the file basename (traversal-proof) and expire; tampering → 404. The PBX filesystem is never exposed.
+- `GET /v1/recordings/:token` streams the wav. Tokens embed only the file basename (traversal-proof) plus the originating connectionId, and expire; tampering → 404. The PBX filesystem is never exposed.
+- **Source of the bytes:** direct connections read `RECORDINGS_BASE_DIR` (a mount/sync of the monitor dir); **reverse connections pull the file from the on-prem agent over its file channel** (`/connector-files`), so NAT'd customers need no shared recordings mount (Phase 9, ADR-0009).
 
 ## 13. Admin API & dashboard
 
