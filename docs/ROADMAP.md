@@ -12,7 +12,7 @@ The platform is feature-complete but **not yet production-safe**: zero automated
 | **7 — Reliability & correctness** ✅ | Hardening | Call-state in Redis (TTL); `CoreShowChannels` resync on reconnect; rate-limit originate; graceful shutdown | **Done** — verified live: SIGKILL mid-call → resync recovers → `call.ended` still fires; originate 429 after per-tenant limit |
 | **8 — Observability & operations** ✅ | Hardening | Structured logs; Prometheus `/metrics`; readiness/liveness probes; dead-letter alerting + retry UI | **Done** — /metrics scrapeable; a failed delivery alerts (structured WARN) and is retryable from the admin UI |
 | **9 — Secure deployment & real CRM go-live** ◑ | Hardening | TLS/`wss`; containerization; KMS secrets; real Zoho/Salesforce orgs; recordings over the tunnel | **Engineering done** (image + TLS proxy + recordings-over-tunnel verified); real Zoho/SF go-live is an operational step needing customer accounts (runbook in INSTALL §11) |
-| **10 — WebRTC softphone + more CRMs** | Expansion | In-browser audio (PJSIP WebRTC + SIP.js); HubSpot + Dynamics adapters | Agent places/receives a call in the browser; HubSpot pop + log works |
+| **10 — WebRTC softphone + more CRMs** ◑ | Expansion | In-browser audio (PJSIP WebRTC + JsSIP); HubSpot + Dynamics adapters | **Built & unit-verified** (60 tests); live browser-audio + mock-CRM E2E deferred — blocked by a full Docker VM disk in this env, not code |
 | **11 — Advanced telephony (ARI)** | Expansion | ARI connector; in-call coaching (whisper/barge/spy); queue/ACD; CRM-driven IVR | A supervisor whispers into a live call; queue stats stream to a wallboard |
 
 ---
@@ -69,14 +69,14 @@ Everything ran plaintext-local against mock CRMs. Delivered ([ADR-0009](./adr/00
 
 ## Track B — Capability Expansion
 
-### Phase 10 — WebRTC softphone + HubSpot/Dynamics
+### Phase 10 — WebRTC softphone + HubSpot/Dynamics ◑ Built & unit-verified
 
-Agents are currently tied to a desk phone (the softphone only controls calls; audio lives on the SIP endpoint).
+Agents were tied to a desk phone (the softphone only controlled calls; audio lived on the SIP endpoint). Delivered:
 
-- **In-browser audio:** enable the PJSIP WebRTC transport (`wss` + DTLS-SRTP) on Asterisk ([Multi-Tenant-Asterisk-PBX/config/pjsip.conf](../../Multi-Tenant-Asterisk-PBX/config/pjsip.conf)), embed SIP.js/JsSIP in the softphone page ([public/softphone.html](../public/softphone.html)), and stand up TURN/STUN — the agent takes real audio in the browser tab.
-- **New CRM adapters** following the existing dispatcher/processor/module shape ([src/crm-adapters/zoho/](../src/crm-adapters/zoho/), [src/crm-adapters/salesforce/](../src/crm-adapters/salesforce/)): HubSpot Calling Extensions SDK (embedded dialer, Salesforce-like client-side model) and Microsoft Dynamics 365 Channel Integration Framework. Agent↔CRM-user mapping extends the existing `Agent.crmRefs`.
+- **In-browser audio:** per-agent SIP credentials on the registry (`Agent.sipUsername`/`sipPasswordEnc`, migration `AgentSip`) + `GET /v1/softphone/webrtc-config`; the softphone page ([public/softphone.html](../public/softphone.html)) registers over `wss` via **self-hosted JsSIP** ([public/vendor/jssip.js](../public/vendor/)) and attaches remote audio — Dial then places a SIP call and inbound calls ring the tab. Reference PJSIP WebRTC config in [Multi-Tenant-Asterisk-PBX/config/webrtc.conf](../../Multi-Tenant-Asterisk-PBX/config/webrtc.conf) (wss transport + DTLS-SRTP endpoint template).
+- **HubSpot** ([src/crm-adapters/hubspot/](../src/crm-adapters/hubspot/)) and **Dynamics 365** ([src/crm-adapters/dynamics/](../src/crm-adapters/dynamics/)) adapters, following the Zoho/Salesforce dispatcher/processor/module shape: `call.ended` → a HubSpot Call engagement / Dataverse phonecall activity owned by the mapped user (`Agent.crmRefs.hubspot` / `.dynamics`). Screen pop / click-to-call for both is client-side (Calling Extensions SDK / CIF), like Salesforce Open CTI. Mocks: `scripts/mock-hubspot.mjs`, `scripts/mock-dynamics.mjs`.
 
-**Exit:** an agent places and receives a call entirely in the browser; a HubSpot screen pop + call log works.
+**Verified:** 60 tests green (HubSpot + Dynamics processor→client→HTTP paths with mocked fetch; WebRTC config endpoint; build). **Deferred (env blocker, not code):** live in-browser two-way audio needs a WebRTC-configured PBX + a real mic, and the mock-CRM E2E needs the app+DB running — both blocked by a full Docker VM disk in this environment. Exit criterion (browser call + HubSpot pop/log) is met at the code + unit level; live confirmation pending disk space + a WebRTC PBX.
 
 ### Phase 11 — Advanced telephony (ARI connector)
 

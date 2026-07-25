@@ -23,4 +23,15 @@ export class Agent {
   /** Per-CRM user ids, filled by the Zoho/Salesforce adapters (Phases 3-4). */
   @Column({ type: 'jsonb', default: {} })
   crmRefs: Record<string, string>;
+
+  /**
+   * WebRTC softphone SIP endpoint (Phase 10). When set, the agent can take
+   * real audio in the browser: the softphone registers this endpoint over
+   * wss. Defaults to `ext` if unset. Password is AES-256-GCM encrypted.
+   */
+  @Column({ type: 'varchar', nullable: true })
+  sipUsername: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  sipPasswordEnc: string | null;
 }

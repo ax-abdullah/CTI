@@ -90,6 +90,15 @@ async function main() {
           callbackToken: 'zoho-callback-token-a',
         },
       },
+      // A second CRM on the same tenant — call logging fans out to both.
+      hubspot: {
+        config: {
+          accountsBaseUrl: process.env.SEED_HS_ACCOUNTS_URL ?? 'http://127.0.0.1:4300',
+          apiBaseUrl: process.env.SEED_HS_API_URL ?? 'http://127.0.0.1:4300',
+          clientId: 'mock-hs-client-id',
+        },
+        secrets: { clientSecret: 'mock-hs-client-secret', refreshToken: 'mock-hs-refresh-token' },
+      },
     },
     {
       slug: 'tenant-b',
@@ -119,6 +128,16 @@ async function main() {
           refreshToken: 'mock-sf-refresh-token',
         },
       },
+      dynamics: {
+        config: {
+          loginBaseUrl: process.env.SEED_DYN_LOGIN_URL ?? 'http://127.0.0.1:4400',
+          orgUrl: process.env.SEED_DYN_ORG_URL ?? 'http://127.0.0.1:4400',
+          aadTenantId: 'mock-aad-tenant',
+          apiVersion: '9.2',
+          clientId: 'mock-dyn-client-id',
+        },
+        secrets: { clientSecret: 'mock-dyn-client-secret' },
+      },
     },
   ];
 
@@ -137,11 +156,26 @@ async function main() {
       webhookSecretEnc: encrypt(key, spec.webhookSecret),
     });
     for (const agent of spec.agents) {
-      await ds.getRepository(Agent).save({ tenantId: tenant.id, ...agent });
+      // Lab WebRTC SIP creds: username = ext, password = webrtc-<ext>. The
+      // reference PJSIP webrtc endpoints (config/webrtc.conf) use the same.
+      await ds.getRepository(Agent).save({
+        tenantId: tenant.id,
+        ...agent,
+        sipUsername: agent.ext,
+        sipPasswordEnc: encrypt(key, `webrtc-${agent.ext}`),
+      });
     }
+    const crm = spec as {
+      zoho?: { config: Record<string, string>; secrets: Record<string, string> };
+      salesforce?: { config: Record<string, string>; secrets: Record<string, string> };
+      hubspot?: { config: Record<string, string>; secrets: Record<string, string> };
+      dynamics?: { config: Record<string, string>; secrets: Record<string, string> };
+    };
     for (const [type, integration] of [
-      ['zoho', spec.zoho],
-      ['salesforce', (spec as { salesforce?: { config: Record<string, string>; secrets: Record<string, string> } }).salesforce],
+      ['zoho', crm.zoho],
+      ['salesforce', crm.salesforce],
+      ['hubspot', crm.hubspot],
+      ['dynamics', crm.dynamics],
     ] as const) {
       if (!integration) continue;
       await ds.getRepository(CrmIntegration).save({

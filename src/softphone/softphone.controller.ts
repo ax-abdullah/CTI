@@ -19,6 +19,7 @@ import { TenantApiKeyGuard } from '../api/api-key.guard';
 import { CtiThrottlerGuard } from '../api/cti-throttler.guard';
 import { PbxSupervisorService } from '../pbx-connector/pbx-supervisor.service';
 import { ResolvedTenant, TenantRegistryService } from '../tenants/tenant-registry.service';
+import { CryptoService } from '../tenants/crypto.service';
 import { signAgentToken, verifyAgentToken } from './agent-token.util';
 
 class AgentLoginDto {
@@ -43,6 +44,7 @@ export class SoftphoneController {
     private readonly config: ConfigService,
     private readonly registry: TenantRegistryService,
     private readonly supervisor: PbxSupervisorService,
+    private readonly crypto: CryptoService,
   ) {}
 
   /**
@@ -73,6 +75,47 @@ export class SoftphoneController {
       this.config.getOrThrow('SOFTPHONE_JWT_SECRET'),
     );
     return { token, ext: agent.ext, displayName: agent.displayName, expiresInSec: this.tokenTtlSec };
+  }
+
+  /**
+   * WebRTC registration parameters for the token's agent, so the softphone
+   * can register a SIP endpoint over wss and carry real audio in the browser.
+   * The SIP password is returned to the browser (standard for WebRTC UAs) —
+   * it is protected by the agent token + HTTPS and scoped to that endpoint.
+   */
+  @ApiTags('Softphone')
+  @ApiSecurity('agent-token')
+  @ApiOperation({ summary: 'WebRTC (JsSIP) registration config for the agent' })
+  @Get('v1/softphone/webrtc-config')
+  webrtcConfig(@Headers('authorization') authorization: string | undefined) {
+    const claims = this.requireAgent(authorization);
+    const tenant = this.registry.tenantBySlug(claims.tenantSlug);
+    const agent = tenant?.entity.agents?.find((a) => a.ext === claims.ext);
+    if (!agent) throw new UnauthorizedException('Unknown agent');
+
+    const wssUrl = this.config.get<string>('WEBRTC_WSS_URL');
+    const domain = this.config.get<string>('WEBRTC_SIP_DOMAIN');
+    const password = agent.sipPasswordEnc ? this.crypto.decrypt(agent.sipPasswordEnc) : undefined;
+    if (!wssUrl || !domain || !password) {
+      throw new BadRequestException('WebRTC is not configured for this agent/tenant');
+    }
+    const authUser = agent.sipUsername ?? agent.ext;
+    const stun = this.config.get<string>('WEBRTC_STUN_URL');
+    return {
+      wssUrl,
+      sipUri: `sip:${authUser}@${domain}`,
+      authUser,
+      password,
+      iceServers: stun ? [{ urls: stun }] : [],
+    };
+  }
+
+  /** Verifies the Bearer agent token or throws 401. */
+  private requireAgent(authorization: string | undefined) {
+    const token = authorization?.startsWith('Bearer ') ? authorization.slice(7) : '';
+    const claims = verifyAgentToken(token, this.config.getOrThrow('SOFTPHONE_JWT_SECRET'));
+    if (!claims) throw new UnauthorizedException('Invalid agent token');
+    return claims;
   }
 
   /** Click-to-dial from the softphone page (Open CTI onClickToDial). */
@@ -110,4 +153,19 @@ export class SoftphoneController {
   callCenterXml(): string {
     return readFileSync(join(__dirname, '..', '..', 'public', 'callcenter-definition.xml'), 'utf8');
   }
+
+  /** Self-hosted JsSIP bundle for the WebRTC softphone (no external CDN). */
+  @ApiExcludeEndpoint()
+  @Get('vendor/jssip.js')
+  @Header('Content-Type', 'application/javascript; charset=utf-8')
+  @Header('Cache-Control', 'public, max-age=86400')
+  jssip(): string {
+    SoftphoneController.jssipCache ??= readFileSync(
+      join(__dirname, '..', '..', 'public', 'vendor', 'jssip.js'),
+      'utf8',
+    );
+    return SoftphoneController.jssipCache;
+  }
+
+  private static jssipCache?: string;
 }

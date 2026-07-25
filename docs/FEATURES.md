@@ -115,6 +115,19 @@ Install at any customer **without inbound firewall holes**.
 - `/admin` — auto-refreshing dashboard: connection status, tenants, active calls, queue health.
 - `X-Admin-Key` API: `GET /admin/overview`, `POST /admin/{pbx-connections,tenants,agents,integrations}` (generated credentials returned once), `POST /admin/reload` — hot-reloads the registry and restarts **only changed** PBX connections; live tunnels survive.
 
+## 15. WebRTC softphone (Phase 10)
+
+The agent can take **real audio in the browser tab** instead of a desk phone. `GET /v1/softphone/webrtc-config` (agent token) returns the SIP registration params (`wssUrl`, `sipUri`, `authUser`, `password`, `iceServers`) from the agent's registry SIP credentials; the softphone page registers over `wss` via self-hosted JsSIP. When audio is enabled, Dial places a SIP call and inbound calls ring the tab; otherwise it falls back to the desk-phone originate. Reference Asterisk config: `webrtc.conf` (wss transport + DTLS-SRTP endpoints).
+
+## 16. HubSpot & Dynamics adapters (Phase 10)
+
+Two more CRMs behind the same normalized-event bus, following the Zoho/Salesforce shape:
+
+- **HubSpot** ([src/crm-adapters/hubspot/](../src/crm-adapters/hubspot/)) — `call.ended` → a HubSpot **Call engagement** (durable `hubspot-delivery` queue), owned by `Agent.crmRefs.hubspot`. Pop / click-to-call is the client-side Calling Extensions SDK.
+- **Dynamics 365** ([src/crm-adapters/dynamics/](../src/crm-adapters/dynamics/)) — `call.ended` → a Dataverse **phonecall activity** (`dynamics-delivery` queue), owned via `ownerid@odata.bind` from `Agent.crmRefs.dynamics`. Pop / click-to-call is the client-side Channel Integration Framework.
+
+A tenant may enable several CRMs at once; logging fans out to each enabled adapter.
+
 ## 14. Security model
 
 - AMI users scoped to `read=call,cdr,dialplan,dtmf` / `write=call,originate`; never `write=system`; 5038 never public.

@@ -37,6 +37,12 @@
     <button id="dialBtn" disabled>Dial</button>
   </div>
 
+  <div class="row">
+    <button id="audioBtn">Enable browser audio</button>
+    <span id="audioState" class="pill">audio off</span>
+  </div>
+  <audio id="remoteAudio" autoplay></audio>
+
   <div id="call">
     <div id="callState"></div>
     <div id="callNumber"></div>
@@ -46,6 +52,8 @@
   <div id="log"></div>
 </div>
 
+<!-- Self-hosted JsSIP (served by the app), used for the WebRTC audio leg. -->
+<script src="/vendor/jssip.js"></script>
 <script>
 /**
  * Runs standalone (lab) or embedded in Salesforce as the Call Center
@@ -54,6 +62,12 @@
  *   {salesforce-instance}/support/api/61.0/lightning/opencti_min.js
  * Query params: token=<agent JWT> (required), opencti=<opencti_min.js URL>
  * (present only when embedded).
+ *
+ * Two dialing modes:
+ *  - default: click-to-call via REST (AMI Originate rings the desk phone)
+ *  - WebRTC (after "Enable browser audio"): JsSIP registers the agent's SIP
+ *    endpoint over wss and carries audio in the tab; Dial then places a SIP
+ *    call and incoming calls ring here.
  */
 (() => {
   const qs = new URLSearchParams(location.search);
@@ -132,8 +146,7 @@
   };
 
   // ---- click-to-dial -------------------------------------------------
-  const dial = async (number) => {
-    if (!number) return;
+  const restOriginate = async (number) => {
     el('dialBtn').disabled = true;
     try {
       const res = await fetch('/v1/softphone/originate', {
@@ -149,8 +162,72 @@
       el('dialBtn').disabled = false;
     }
   };
+  // If browser audio is registered, place the call over WebRTC; else ring the desk phone.
+  const dial = (number) => {
+    if (!number) return;
+    if (webrtc.registered) webrtc.call(number);
+    else restOriginate(number);
+  };
   el('dialBtn').addEventListener('click', () => dial(el('dialInput').value.trim()));
   el('dialInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') dial(el('dialInput').value.trim()); });
+
+  // ---- WebRTC audio (JsSIP) -----------------------------------------
+  const webrtc = {
+    ua: null, session: null, registered: false, domain: '', ice: [],
+    async enable() {
+      if (this.ua) return;
+      el('audioState').textContent = 'connecting…';
+      let cfg;
+      try {
+        const res = await fetch('/v1/softphone/webrtc-config', { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) throw new Error(`config ${res.status}`);
+        cfg = await res.json();
+      } catch (err) {
+        el('audioState').textContent = 'audio unavailable';
+        log(`webrtc config failed: ${err.message}`);
+        return;
+      }
+      if (typeof JsSIP === 'undefined') { el('audioState').textContent = 'jssip missing'; return; }
+      this.ice = cfg.iceServers || [];
+      this.domain = new URL(cfg.wssUrl.replace(/^wss?:/, 'https:')).hostname;
+      const socket = new JsSIP.WebSocketInterface(cfg.wssUrl);
+      this.ua = new JsSIP.UA({
+        sockets: [socket],
+        uri: cfg.sipUri,
+        authorization_user: cfg.authUser,
+        password: cfg.password,
+        register: true,
+      });
+      const pcConfig = { iceServers: this.ice };
+      this.ua.on('registered', () => { this.registered = true; el('audioState').textContent = 'audio live'; el('audioState').className = 'pill ok'; log('webrtc registered'); });
+      this.ua.on('unregistered', () => { this.registered = false; el('audioState').textContent = 'audio off'; el('audioState').className = 'pill'; });
+      this.ua.on('registrationFailed', (e) => { el('audioState').textContent = 'audio reg failed'; el('audioState').className = 'pill bad'; log(`webrtc reg failed: ${e.cause || ''}`); });
+      this.ua.on('newRTCSession', ({ session, originator }) => this.onSession(session, originator, pcConfig));
+      this.ua.start();
+    },
+    onSession(session, originator, pcConfig) {
+      this.session = session;
+      session.on('ended', () => { this.session = null; });
+      session.on('failed', () => { this.session = null; });
+      session.on('peerconnection', (e) => {
+        e.peerconnection.addEventListener('track', (ev) => { el('remoteAudio').srcObject = ev.streams[0]; });
+      });
+      if (originator === 'remote') { // incoming: answer with audio
+        log('webrtc incoming — answering');
+        session.answer({ mediaConstraints: { audio: true, video: false }, pcConfig });
+      }
+    },
+    call(number) {
+      if (!this.ua || !this.registered) return;
+      const domain = this.ua.configuration.uri.host || this.domain;
+      log(`webrtc call -> ${number}`);
+      this.ua.call(`sip:${number}@${domain}`, {
+        mediaConstraints: { audio: true, video: false },
+        pcConfig: { iceServers: this.ice },
+      });
+    },
+  };
+  el('audioBtn').addEventListener('click', () => webrtc.enable());
 })();
 </script>
 </body>

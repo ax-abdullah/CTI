@@ -12,6 +12,8 @@ import { CallStateModule } from './call-state/call-state.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { ZohoModule } from './crm-adapters/zoho/zoho.module';
 import { SalesforceModule } from './crm-adapters/salesforce/salesforce.module';
+import { HubSpotModule } from './crm-adapters/hubspot/hubspot.module';
+import { DynamicsModule } from './crm-adapters/dynamics/dynamics.module';
 import { SoftphoneModule } from './softphone/softphone.module';
 import { PresenceModule } from './presence/presence.module';
 import { RecordingsModule } from './recordings/recordings.module';
@@ -65,6 +67,8 @@ import { ApiModule } from './api/api.module';
     WebhooksModule,
     ZohoModule,
     SalesforceModule,
+    HubSpotModule,
+    DynamicsModule,
     SoftphoneModule,
     PresenceModule,
     RecordingsModule,

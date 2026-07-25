@@ -1,7 +1,7 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { Tenant } from './tenant.entity';
 
-export type CrmType = 'zoho' | 'salesforce';
+export type CrmType = 'zoho' | 'salesforce' | 'hubspot' | 'dynamics';
 
 /**
  * A tenant's connection to one CRM. Non-secret settings live in `config`
