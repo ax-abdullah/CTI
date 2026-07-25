@@ -5,6 +5,8 @@ import { PbxSupervisorService } from '../pbx-connector/pbx-supervisor.service';
 import { WEBHOOK_QUEUE } from '../webhooks/webhook.types';
 import { ZOHO_QUEUE } from '../crm-adapters/zoho/zoho.types';
 import { SALESFORCE_QUEUE } from '../crm-adapters/salesforce/salesforce.types';
+import { HUBSPOT_QUEUE } from '../crm-adapters/hubspot/hubspot.types';
+import { DYNAMICS_QUEUE } from '../crm-adapters/dynamics/dynamics.types';
 import { MetricsService } from './metrics.service';
 
 /**
@@ -26,6 +28,8 @@ export class MetricsCollectorsService implements OnModuleInit {
     @InjectQueue(WEBHOOK_QUEUE) private readonly webhookQueue: Queue,
     @InjectQueue(ZOHO_QUEUE) private readonly zohoQueue: Queue,
     @InjectQueue(SALESFORCE_QUEUE) private readonly salesforceQueue: Queue,
+    @InjectQueue(HUBSPOT_QUEUE) private readonly hubspotQueue: Queue,
+    @InjectQueue(DYNAMICS_QUEUE) private readonly dynamicsQueue: Queue,
   ) {}
 
   onModuleInit(): void {
@@ -54,6 +58,8 @@ export class MetricsCollectorsService implements OnModuleInit {
       ['webhook', this.webhookQueue],
       ['zoho', this.zohoQueue],
       ['salesforce', this.salesforceQueue],
+      ['hubspot', this.hubspotQueue],
+      ['dynamics', this.dynamicsQueue],
     ];
     const nowFailing = new Set<string>();
     for (const [name, queue] of queues) {

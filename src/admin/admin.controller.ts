@@ -27,6 +27,8 @@ import { TenantRegistryService } from '../tenants/tenant-registry.service';
 import { WEBHOOK_QUEUE } from '../webhooks/webhook.types';
 import { ZOHO_QUEUE } from '../crm-adapters/zoho/zoho.types';
 import { SALESFORCE_QUEUE } from '../crm-adapters/salesforce/salesforce.types';
+import { HUBSPOT_QUEUE } from '../crm-adapters/hubspot/hubspot.types';
+import { DYNAMICS_QUEUE } from '../crm-adapters/dynamics/dynamics.types';
 import { AdminKeyGuard } from './admin-key.guard';
 
 /**
@@ -51,6 +53,8 @@ export class AdminController {
     @InjectQueue(WEBHOOK_QUEUE) private readonly webhookQueue: Queue,
     @InjectQueue(ZOHO_QUEUE) private readonly zohoQueue: Queue,
     @InjectQueue(SALESFORCE_QUEUE) private readonly salesforceQueue: Queue,
+    @InjectQueue(HUBSPOT_QUEUE) private readonly hubspotQueue: Queue,
+    @InjectQueue(DYNAMICS_QUEUE) private readonly dynamicsQueue: Queue,
   ) {}
 
   @ApiExcludeEndpoint()
@@ -64,10 +68,12 @@ export class AdminController {
   @UseGuards(AdminKeyGuard)
   @Get('overview')
   async overview() {
-    const [webhook, zoho, salesforce] = await Promise.all([
+    const [webhook, zoho, salesforce, hubspot, dynamics] = await Promise.all([
       this.webhookQueue.getJobCounts(),
       this.zohoQueue.getJobCounts(),
       this.salesforceQueue.getJobCounts(),
+      this.hubspotQueue.getJobCounts(),
+      this.dynamicsQueue.getJobCounts(),
     ]);
     const tenants = await this.tenantRepo.find({ relations: { agents: true } });
     const integrations = await this.integrationRepo.find();
@@ -81,7 +87,7 @@ export class AdminController {
         integrations: integrations.filter((i) => i.tenantId === t.id).map((i) => i.type),
       })),
       activeCalls: await this.callState.activeCalls(),
-      queues: { webhook, zoho, salesforce },
+      queues: { webhook, zoho, salesforce, hubspot, dynamics },
     };
   }
 
@@ -99,7 +105,13 @@ export class AdminController {
   }
 
   private queueByName(name: string): Queue | undefined {
-    return { webhook: this.webhookQueue, zoho: this.zohoQueue, salesforce: this.salesforceQueue }[name];
+    return {
+      webhook: this.webhookQueue,
+      zoho: this.zohoQueue,
+      salesforce: this.salesforceQueue,
+      hubspot: this.hubspotQueue,
+      dynamics: this.dynamicsQueue,
+    }[name];
   }
 
   @ApiOperation({
@@ -113,6 +125,8 @@ export class AdminController {
       ['webhook', this.webhookQueue],
       ['zoho', this.zohoQueue],
       ['salesforce', this.salesforceQueue],
+      ['hubspot', this.hubspotQueue],
+      ['dynamics', this.dynamicsQueue],
     ];
     const items: unknown[] = [];
     for (const [name, queue] of queues) {

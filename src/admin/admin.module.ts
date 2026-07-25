@@ -11,12 +11,20 @@ import { Tenant } from '../tenants/entities/tenant.entity';
 import { WEBHOOK_QUEUE } from '../webhooks/webhook.types';
 import { ZOHO_QUEUE } from '../crm-adapters/zoho/zoho.types';
 import { SALESFORCE_QUEUE } from '../crm-adapters/salesforce/salesforce.types';
+import { HUBSPOT_QUEUE } from '../crm-adapters/hubspot/hubspot.types';
+import { DYNAMICS_QUEUE } from '../crm-adapters/dynamics/dynamics.types';
 import { AdminController } from './admin.controller';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([PbxConnection, Tenant, Agent, CrmIntegration]),
-    BullModule.registerQueue({ name: WEBHOOK_QUEUE }, { name: ZOHO_QUEUE }, { name: SALESFORCE_QUEUE }),
+    BullModule.registerQueue(
+      { name: WEBHOOK_QUEUE },
+      { name: ZOHO_QUEUE },
+      { name: SALESFORCE_QUEUE },
+      { name: HUBSPOT_QUEUE },
+      { name: DYNAMICS_QUEUE },
+    ),
     TenantsModule,
     PbxConnectorModule,
     CallStateModule,
