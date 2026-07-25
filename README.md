@@ -7,6 +7,8 @@ Multi-tenant CTI middleware connecting Asterisk/FreePBX to CRMs — click-to-cal
 | Doc | What's in it |
 |---|---|
 | [docs/INSTALL.md](./docs/INSTALL.md) | Step-by-step installation: infra, env, PBX prep (lab + production FreePBX), onboarding, WebRTC, reverse connector, container deploy, go-live runbook |
+| [docs/HOW-TO-USE.md](./docs/HOW-TO-USE.md) | Task-oriented how-tos for every feature (curl/WS examples) + troubleshooting |
+| [docs/TESTING.md](./docs/TESTING.md) | Manual test & validation scenarios, negative cases, and end-to-end user-flow use-cases |
 | [docs/FEATURES.md](./docs/FEATURES.md) | Feature catalog — how each works and its endpoints |
 | **`/docs` (Swagger UI)** | Live, interactive API reference with all four auth schemes — served by the running app |
 | [docs/postman/](./docs/postman/CTI-Platform.postman_collection.json) | Postman collection: every endpoint with request + example responses |
