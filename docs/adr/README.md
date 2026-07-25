@@ -13,3 +13,4 @@ Decisions that shaped the CTI platform, in the order they were made. Format: Con
 | [0007](0007-reverse-onprem-connector.md) | Reverse on-prem connector over an outbound WebSocket tunnel | Accepted |
 | [0008](0008-signed-capability-urls-for-recordings.md) | Signed capability URLs for recordings | Accepted |
 | [0009](0009-tls-terminating-reverse-proxy-deployment.md) | TLS-terminating reverse proxy + containerized deployment | Accepted |
+| [0010](0010-webrtc-softphone-and-crm-expansion.md) | WebRTC softphone (self-hosted JsSIP) + HubSpot/Dynamics adapters | Accepted |
