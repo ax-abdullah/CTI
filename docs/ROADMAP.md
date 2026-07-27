@@ -17,7 +17,7 @@ The platform is feature-complete but **not yet production-safe**: zero automated
 | **10 — WebRTC softphone + more CRMs** ✅ | Expansion | In-browser audio (PJSIP WebRTC + JsSIP); HubSpot + Dynamics adapters | **Done** — HubSpot + Dynamics validated live (call → logged engagement/phonecall, multi-CRM fan-out); softphone loads JsSIP + fetches WebRTC config in-browser. Real two-way audio needs a wss-configured PBX |
 | **11 — Advanced telephony (ARI)** ✅ | Expansion | ARI connector; in-call coaching (whisper/barge/spy); queue/ACD; CRM-driven IVR | **Done** — coaching Originate and the queue wallboard both execute live (`waiting` → `abandoned` observed); ARI connector + IVR routing unit/integration-tested (92 tests). Coached *audio* needs registered SIP phones; the ARI/Stasis path needs `http.conf`/`ari.conf` |
 | **12a — Horizontal scale: correctness at N>1** ✅ | Hardening | Single-writer PBX ownership (Redis leases); cluster event bus; cross-pod command RPC; shared presence/queue-stats; registry fan-out | **Done** — verified live: 2 replicas + 1 call → **exactly 1 CRM write per integration** (was 2); `SIGTERM` on the owner → peer took over in ~5s; one `/admin/reload` reloaded both pods; a replica owning nothing returns identical `/v1/agents/state` and `/v1/queues`. 92 tests |
-| **12b — Role split & operability** ⬜ | Hardening | `CTI_ROLE=api\|connector\|worker`; autoscaling metrics; graceful WebSocket drain; pool sizing; migrations as a separate entrypoint | Each role boots standalone; suite green |
+| **12b — Role split & operability** ✅ | Hardening | `CTI_ROLE=api\|connector\|worker`; autoscaling metrics; graceful WebSocket drain; pool sizing; migrations as a separate entrypoint | **Done** — verified live: each role boots standalone; connector holds the only AMI socket and lease, worker delivers all jobs, api/connector deliver none; `cti_leases_held` 1 on connector vs 0 on api |
 | **12c — Kubernetes** ⬜ | Hardening | Helm chart; KEDA autoscaling; ingress with WebSocket upgrade; migration Job; CI image build/push | Autoscaling observed under load |
 
 ---
@@ -128,9 +128,18 @@ Detail in [ADR-0012](./adr/0012-single-writer-ownership-for-horizontal-scale.md)
 
 **Cost of the design:** Redis is now a correctness dependency, not a cache. Run it HA before production.
 
-### 12b — Role split & operability ⬜
+### 12b — Role split & operability ✅
 
-One image, `CTI_ROLE=api|connector|worker`, so the three concerns scale on their own signals rather than as identical replicas. Producers stay with the emitter (dispatchers on `connector`), which keeps enqueue exactly-once for free. Plus the metrics autoscaling needs (`cti_softphone_clients`, HTTP request counters, active calls, leases held), graceful WebSocket drain, explicit connection-pool sizing, and migrations moved out of app boot.
+One image, `CTI_ROLE=api|connector|worker`, so the three concerns scale on their own signals rather than as identical replicas. `all` remains the default and is genuinely the union of the other three, not a fourth code path.
+
+- **Producers stay with the emitter.** The five dispatchers load only on `connector`, so enqueue stays exactly-once by construction — the replica that derives an event is the only one able to queue it. Processors load on `worker`.
+- **Supervisors load everywhere but claim nothing off-role.** On an `api` replica `PbxSupervisorService` holds no connections and acts purely as the command-routing client, which is what lets click-to-call work from a replica that owns no PBX.
+- **Scale signals added:** `cti_softphone_clients` (primary `api` signal), `cti_http_requests_total` + `cti_http_request_duration_seconds` (labelled by *route template*, never the raw URL, so recording tokens cannot explode Prometheus cardinality), `cti_active_calls`, `cti_leases_held`, `cti_ari_connection_up`. Documented which are per-pod (`sum()`) versus global (`cti_queue_jobs` — `max()`, since every replica reports the same Redis-derived number).
+- **Migrations left app boot.** `migrationsRun: false` plus `src/migrate.ts` (`npm run migrate`), because N replicas booting together race the same DDL with no advisory lock. Exits non-zero so a deploy stops rather than starting against a half-migrated schema.
+- **Graceful drain:** agent WebSockets are closed with code `1012` ("Service Restart") so clients treat it as "come back shortly" rather than a hard failure.
+- **Pool sizing:** `DB_POOL_MAX` per replica, because the Postgres total is that value times the replica count.
+
+**Verified live:** all three roles boot standalone; the connector holds the only AMI socket and the only lease; the worker delivered all three webhook jobs while api and connector delivered none; `api` returns 404 for `/v1/...` while still serving `/health/ready` and `/metrics`; `cti_leases_held` reads 1 on the connector and 0 on the api replica.
 
 ### 12c — Kubernetes ⬜
 

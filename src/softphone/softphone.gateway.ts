@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { Logger, OnApplicationShutdown } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { OnEvent } from '@nestjs/event-emitter';
 import { OnGatewayConnection, OnGatewayDisconnect, WebSocketGateway } from '@nestjs/websockets';
@@ -32,7 +32,9 @@ interface AgentSocket {
  * that owns the PBX (ADR-0012).
  */
 @WebSocketGateway({ path: '/softphone-ws' })
-export class SoftphoneGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class SoftphoneGateway
+  implements OnGatewayConnection, OnGatewayDisconnect, OnApplicationShutdown
+{
   private readonly logger = new Logger(SoftphoneGateway.name);
   private readonly clients = new Map<WebSocket, AgentSocket>();
 
@@ -58,6 +60,29 @@ export class SoftphoneGateway implements OnGatewayConnection, OnGatewayDisconnec
     const client = this.clients.get(socket);
     if (client) this.logger.log(`Softphone disconnected: ${client.tenantSlug}/${client.ext}`);
     this.clients.delete(socket);
+  }
+
+  /** Live socket count — the primary scale signal for the api role. */
+  clientCount(): number {
+    return this.clients.size;
+  }
+
+  /**
+   * Rolling deploys are routine, so agents must not simply have the socket cut
+   * from under them. 1012 ("Service Restart") is the status a client is meant
+   * to treat as "come back shortly", which is exactly right here: another
+   * replica is already able to serve them.
+   */
+  onApplicationShutdown(): void {
+    for (const { socket, tenantSlug, ext } of this.clients.values()) {
+      try {
+        socket.close(1012, 'server restarting');
+      } catch {
+        /* already gone */
+      }
+      this.logger.log(`Draining softphone ${tenantSlug}/${ext}`);
+    }
+    this.clients.clear();
   }
 
   // Each event carries its own agentExt, so no per-call routing state is kept

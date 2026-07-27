@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { ClusterBusService } from './cluster-bus.service';
 import { ClusterRpcService } from './cluster-rpc.service';
 import { LeaseService } from './lease.service';
-import { POD_ID, POD_IDENTITY } from './cluster.types';
+import { CTI_ROLE, POD_ID, POD_IDENTITY, readRole } from './cluster.types';
 
 /**
  * The three primitives that make more than one replica safe (ADR-0012):
@@ -22,10 +22,11 @@ import { POD_ID, POD_IDENTITY } from './cluster.types';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => config.get<string>('POD_ID') ?? POD_ID,
     },
+    { provide: CTI_ROLE, useFactory: () => readRole() },
     LeaseService,
     ClusterBusService,
     ClusterRpcService,
   ],
-  exports: [POD_IDENTITY, LeaseService, ClusterBusService, ClusterRpcService],
+  exports: [POD_IDENTITY, CTI_ROLE, LeaseService, ClusterBusService, ClusterRpcService],
 })
 export class ClusterModule {}

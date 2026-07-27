@@ -1,5 +1,6 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { PbxConnectorModule } from '../pbx-connector/pbx-connector.module';
 import { WEBHOOK_QUEUE } from '../webhooks/webhook.types';
 import { ZOHO_QUEUE } from '../crm-adapters/zoho/zoho.types';
@@ -10,6 +11,7 @@ import { MetricsService } from './metrics.service';
 import { MetricsCollectorsService } from './metrics-collectors.service';
 import { MetricsController } from './metrics.controller';
 import { HealthController } from './health.controller';
+import { HttpLoggingInterceptor } from './http-logging.interceptor';
 
 @Module({
   imports: [
@@ -22,7 +24,13 @@ import { HealthController } from './health.controller';
       { name: DYNAMICS_QUEUE },
     ),
   ],
-  providers: [MetricsService, MetricsCollectorsService],
+  providers: [
+    MetricsService,
+    MetricsCollectorsService,
+    // Registered here rather than via app.useGlobalInterceptors() so it can
+    // inject MetricsService — a manually constructed interceptor gets no DI.
+    { provide: APP_INTERCEPTOR, useClass: HttpLoggingInterceptor },
+  ],
   controllers: [MetricsController, HealthController],
   exports: [MetricsService],
 })

@@ -39,7 +39,7 @@ Build, provision the schema (migrations own it — no `synchronize`), and run th
 ```bash
 npm run build
 npm run migration:run   # creates/updates the schema on a clean or existing DB
-npm test                # 76 unit + integration tests, no live infra needed
+npm test                # 92 unit + integration tests, no live infra needed
 ```
 
 ## 4. Prepare the PBX (AMI)
@@ -208,7 +208,26 @@ The mock servers (`scripts/mock-*.mjs`) prove the contract; going live needs the
 
 Safe from Phase 12a onward, and **only** from Phase 12a onward — on an earlier build two replicas duplicate every CRM write. Full operator guide: [SCALING.md](./SCALING.md).
 
-Nothing special is required to scale out: give every replica the **identical environment** and start more of them. They coordinate through Redis.
+**Migrations no longer run at app startup.** N replicas booting together would race the same DDL with no advisory lock, so apply them once, ahead of the rollout:
+
+```bash
+npm run migrate          # local (reads .env)
+node dist/migrate.js     # container / Kubernetes Job (env from the orchestrator)
+```
+
+It exits non-zero on failure, so a deploy stops rather than starting replicas against a half-migrated schema.
+
+Nothing else is required to scale out: give every replica the **identical environment** and start more of them. They coordinate through Redis.
+
+**Roles (Phase 12b).** One image; `CTI_ROLE` selects what a process does. `all` (the default) is every role at once and is what compose and development run.
+
+```bash
+CTI_ROLE=connector npm start   # owns PBX sockets; the only role that enqueues
+CTI_ROLE=api       npm start   # HTTP + agent WebSockets
+CTI_ROLE=worker    npm start   # drains the delivery queues
+```
+
+Every role listens on `PORT` and answers `/health/live`, `/health/ready` and `/metrics`. Only `api` serves the tenant API and Swagger — a 404 for `/v1/...` on a connector or worker is expected. Set `DB_POOL_MAX` per role: the Postgres pool is per replica, so the cluster total is that value times the replica count.
 
 ```bash
 # same env, different ports/hosts — they find each other via Redis

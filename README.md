@@ -20,7 +20,7 @@ Multi-tenant CTI middleware connecting Asterisk/FreePBX to CRMs — click-to-cal
 
 ## Status
 
-Built and validated through **Phase 12a**. What's implemented:
+Built and validated through **Phase 12b**. What's implemented:
 
 - **Core (P1–2):** hand-rolled AMI connector, Linkedid call-state correlation → normalized `call.*` events, multi-tenant registry (shared-PBX routing, encrypted creds, scoped API keys), generic signed webhooks over durable BullMQ.
 - **CRMs (P3–4, P10):** Zoho PhoneBridge, Salesforce Open CTI, HubSpot, Microsoft Dynamics 365 — a tenant can enable several; logging fans out to each.
@@ -29,6 +29,7 @@ Built and validated through **Phase 12a**. What's implemented:
 - **WebRTC softphone (P10):** in-browser audio via self-hosted JsSIP (real two-way audio needs a WebRTC-configured PBX).
 - **Advanced telephony (P11):** ARI connector (Stasis → same normalized events), in-call coaching (spy/whisper/barge), queue/ACD wallboard, CRM-driven IVR routing.
 - **Horizontal scale (P12a):** safe to run **more than one replica**. A PBX connection is driven by exactly one replica (Redis lease), events reach every replica over a cluster bus so agent sockets stay live, commands route to whichever replica holds a PBX socket, and presence/queue-stats/call-state are all shared. See [docs/SCALING.md](./docs/SCALING.md).
+- **Role split (P12b):** one image, `CTI_ROLE=api|connector|worker` (default `all`), so the three concerns scale on their own signals — user traffic, PBX inventory, and queue depth. Delivery producers live with the connector, keeping enqueue exactly-once by construction. Adds the autoscaling metrics, WebSocket drain on shutdown, per-replica pool sizing, and `npm run migrate` so replicas no longer race DDL at boot.
 
 **Truly pending (operational, not code):** real Zoho/Salesforce/HubSpot/Dynamics org credentials (see [INSTALL §11](./docs/INSTALL.md)); a WebRTC-enabled Asterisk for live browser media; registered SIP phones for audible coaching; and `http.conf`/`ari.conf` + a Stasis dialplan to exercise the ARI driver live. The **queue wallboard is verified live** (it runs on AMI `app_queue` events, not ARI).
 

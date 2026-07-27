@@ -1,7 +1,10 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import { PbxSupervisorService } from '../pbx-connector/pbx-supervisor.service';
+import { AriSupervisorService } from '../pbx-connector/ari/ari-supervisor.service';
+import { LeaseService } from '../cluster/lease.service';
+import { SoftphoneGateway } from '../softphone/softphone.gateway';
 import { WEBHOOK_QUEUE } from '../webhooks/webhook.types';
 import { ZOHO_QUEUE } from '../crm-adapters/zoho/zoho.types';
 import { SALESFORCE_QUEUE } from '../crm-adapters/salesforce/salesforce.types';
@@ -25,16 +28,37 @@ export class MetricsCollectorsService implements OnModuleInit {
   constructor(
     private readonly metrics: MetricsService,
     private readonly supervisor: PbxSupervisorService,
+    private readonly ari: AriSupervisorService,
+    private readonly leases: LeaseService,
     @InjectQueue(WEBHOOK_QUEUE) private readonly webhookQueue: Queue,
     @InjectQueue(ZOHO_QUEUE) private readonly zohoQueue: Queue,
     @InjectQueue(SALESFORCE_QUEUE) private readonly salesforceQueue: Queue,
     @InjectQueue(HUBSPOT_QUEUE) private readonly hubspotQueue: Queue,
     @InjectQueue(DYNAMICS_QUEUE) private readonly dynamicsQueue: Queue,
+    @Optional() private readonly softphone?: SoftphoneGateway,
   ) {}
 
   onModuleInit(): void {
     this.metrics.registerGaugeCollector(() => this.collectConnections());
     this.metrics.registerGaugeCollector(() => this.collectQueues());
+    this.metrics.registerGaugeCollector(() => this.collectScaleSignals());
+  }
+
+  /**
+   * Per-replica gauges that drive autoscaling (Phase 12b). Unlike
+   * `cti_queue_jobs` these are local to this pod, so `sum()` across pods is
+   * the true cluster figure.
+   *
+   * Each is optional at the DI level: on a `worker` replica there is no
+   * softphone gateway, and asking for one would make the module graph depend
+   * on a role it does not run.
+   */
+  private collectScaleSignals(): void {
+    if (this.softphone) this.metrics.softphoneClients.set(this.softphone.clientCount());
+    this.metrics.leasesHeld.set(this.leases.heldCount());
+    for (const c of this.ari.statuses()) {
+      this.metrics.ariConnectionUp.set({ connection: c.name }, c.connected ? 1 : 0);
+    }
   }
 
   private collectConnections(): void {

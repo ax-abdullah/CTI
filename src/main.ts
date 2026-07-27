@@ -4,8 +4,8 @@ import { NestFactory } from '@nestjs/core';
 import { WsAdapter } from '@nestjs/platform-ws';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { readRole, roleServesHttp } from './cluster/cluster.types';
 import { makeLogger } from './observability/json-logger';
-import { HttpLoggingInterceptor } from './observability/http-logging.interceptor';
 
 function mountSwagger(app: Parameters<typeof SwaggerModule.createDocument>[0]): void {
   const config = new DocumentBuilder()
@@ -28,19 +28,27 @@ function mountSwagger(app: Parameters<typeof SwaggerModule.createDocument>[0]): 
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  // One image, three roles (ADR-0012). Defaults to `all` — the single-process
+  // mode used in development and by the compose stack.
+  const role = readRole();
+
+  const app = await NestFactory.create(AppModule.forRole(role), { bufferLogs: true });
   app.useLogger(makeLogger()); // structured JSON logs (LOG_FORMAT=pretty for dev)
   app.useWebSocketAdapter(new WsAdapter(app));
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-  app.useGlobalInterceptors(new HttpLoggingInterceptor());
   // SIGTERM/SIGINT run every module's shutdown hook: AMI sockets close, BullMQ
-  // workers drain, Redis/PG disconnect, and pending finalize timers are cleared
-  // (call-state is already persisted, so nothing in flight is lost).
+  // workers drain, Redis/PG disconnect, leases are released so a peer takes
+  // over immediately, and agent sockets are closed with a reconnect hint.
   app.enableShutdownHooks();
-  mountSwagger(app);
+
+  // Swagger documents the tenant-facing API, which only `api` replicas serve.
+  if (roleServesHttp(role)) mountSwagger(app);
+
+  // Every role listens: `connector` and `worker` still need to answer the
+  // liveness/readiness probes and expose /metrics for scraping.
   const port = Number(process.env.PORT ?? 3000);
   await app.listen(port);
   // eslint-disable-next-line no-console
-  console.log(`CTI platform listening on :${port}`);
+  console.log(`CTI platform [role=${role}] listening on :${port}`);
 }
 void bootstrap();

@@ -48,10 +48,57 @@ export class MetricsService implements OnModuleInit, OnModuleDestroy {
     labelNames: ['connection', 'mode'],
     registers: [this.registry],
   });
+  /**
+   * Derived from Redis, so every replica reports the SAME global number.
+   * Aggregate with max(), never sum() — summing multiplies by replica count.
+   */
   readonly queueJobs = new Gauge({
     name: 'cti_queue_jobs',
-    help: 'BullMQ job counts by queue and state',
+    help: 'BullMQ job counts by queue and state (global: aggregate with max, not sum)',
     labelNames: ['queue', 'state'],
+    registers: [this.registry],
+  });
+
+  // ------------------------------------------------- scale signals (Phase 12b)
+
+  /**
+   * Live agent WebSockets on THIS replica — the primary scale signal for the
+   * api role. Per-pod, so sum() across pods is the true cluster total.
+   */
+  readonly softphoneClients = new Gauge({
+    name: 'cti_softphone_clients',
+    help: 'Agent softphone WebSockets connected to this replica',
+    registers: [this.registry],
+  });
+  /** Per-pod: sum() across connector replicas is the true in-flight total. */
+  readonly activeCalls = new Gauge({
+    name: 'cti_active_calls',
+    help: 'Calls in flight on the connections this replica owns',
+    registers: [this.registry],
+  });
+  /** How ownership is spread; a replica at 0 owns nothing, which is normal. */
+  readonly leasesHeld = new Gauge({
+    name: 'cti_leases_held',
+    help: 'PBX ownership leases held by this replica',
+    registers: [this.registry],
+  });
+  readonly ariConnectionUp = new Gauge({
+    name: 'cti_ari_connection_up',
+    help: 'ARI (Stasis) connection state (1 up, 0 down)',
+    labelNames: ['connection'],
+    registers: [this.registry],
+  });
+  readonly httpRequests = new Counter({
+    name: 'cti_http_requests_total',
+    help: 'HTTP requests by method, route and status',
+    labelNames: ['method', 'route', 'status'],
+    registers: [this.registry],
+  });
+  readonly httpDuration = new Histogram({
+    name: 'cti_http_request_duration_seconds',
+    help: 'HTTP request latency',
+    labelNames: ['method', 'route'],
+    buckets: [0.005, 0.025, 0.1, 0.25, 0.5, 1, 2.5, 5],
     registers: [this.registry],
   });
 

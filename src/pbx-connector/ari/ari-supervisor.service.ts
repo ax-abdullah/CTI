@@ -1,6 +1,7 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { LeaseService } from '../../cluster/lease.service';
+import { CTI_ROLE, CtiRole, roleOwnsPbx } from '../../cluster/cluster.types';
 import { TenantRegistryService, REGISTRY_RELOADED } from '../../tenants/tenant-registry.service';
 import { AriConnection, AriConnectionTarget } from './ari-connection';
 import { AriClient } from './ari-client';
@@ -29,6 +30,7 @@ export class AriSupervisorService implements OnModuleInit, OnModuleDestroy {
     private readonly routing: RoutingService,
     private readonly bus: EventEmitter2,
     private readonly leases: LeaseService,
+    @Inject(CTI_ROLE) private readonly role: CtiRole,
   ) {}
 
   onModuleInit(): void {
@@ -84,6 +86,9 @@ export class AriSupervisorService implements OnModuleInit, OnModuleDestroy {
 
   /** Start anything we can claim; a peer's loss becomes our gain on the next tick. */
   private async sweep(): Promise<void> {
+    // Only a connector role may own PBX sockets (see PbxSupervisorService).
+    if (!roleOwnsPbx(this.role)) return;
+
     for (const [id, target] of this.targets) {
       if (this.connections.has(id)) continue;
       if (!(await this.leases.tryAcquire('ami', id))) continue;

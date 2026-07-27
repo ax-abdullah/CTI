@@ -42,3 +42,6 @@ export const POD_ID = `${process.env.POD_ID ?? hostname()}-${randomBytes(4).toSt
  * the only way to exercise the ownership handover that makes N>1 safe.
  */
 export const POD_IDENTITY = Symbol('POD_IDENTITY');
+
+/** DI token for this process's role, so services can gate behaviour on it. */
+export const CTI_ROLE = Symbol('CTI_ROLE');

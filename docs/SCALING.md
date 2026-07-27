@@ -161,11 +161,35 @@ grep -c call.ended  # against the receiver's output
 
 Full scenarios, including ownership handover and cross-pod reads, are in [TESTING.md §M](./TESTING.md).
 
+## Roles (Phase 12b)
+
+One image; `CTI_ROLE` selects what a process takes on. All four values are valid deployments — `all` is genuinely the union of the other three, not a fourth code path.
+
+| `CTI_ROLE` | Runs | Scale it on |
+|---|---|---|
+| `connector` | PBX sockets, correlation, **and the delivery producers** | number of PBX connections |
+| `api` | HTTP, agent WebSockets, admin, recordings | `cti_softphone_clients`, CPU |
+| `worker` | BullMQ processors only | queue depth |
+| `all` *(default)* | everything | dev, compose, single-node |
+
+Every role listens on `PORT` — `connector` and `worker` still answer `/health/live`, `/health/ready` and serve `/metrics`. Only `api` serves the tenant API and Swagger; the others return 404 for those routes, which is expected rather than a fault.
+
+**Producers live with the emitter.** The dispatchers load only on `connector`, which is what keeps the enqueue exactly-once: the replica that derives an event is the only one that can queue it.
+
+### Scale signals
+
+| Metric | Per-pod? | Drives |
+|---|---|---|
+| `cti_softphone_clients` | yes — `sum()` for the cluster total | `api` |
+| `cti_http_requests_total` / `_duration_seconds` | yes | `api` |
+| `cti_leases_held` | yes | connector spread; `0` on an api replica is normal |
+| `cti_active_calls` | yes | capacity |
+| `cti_queue_jobs` | **no — global** | `worker`. Aggregate with `max()`; `sum()` multiplies by replica count |
+
 ## Not yet built
 
 Phase 12a made replicas *safe*. Two pieces of the plan remain:
 
-- **12b — role split.** One image, `CTI_ROLE=api|connector|worker`, so the API tier scales on user traffic while connectors scale on PBX inventory. Today every replica does everything; that is correct, just not independently scalable.
 - **12c — Kubernetes.** Helm chart, KEDA autoscaling (queue depth for workers, WebSocket count for API, connection count for connectors), ingress with WebSocket upgrade, migrations as a pre-upgrade Job.
 
-Until 12b, scale by adding identical replicas. That works — it simply scales all three concerns together.
+Until then, deploy the roles as separate processes or compose services — the split works today, it simply has no autoscaler driving it.

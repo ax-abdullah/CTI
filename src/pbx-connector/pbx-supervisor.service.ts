@@ -1,8 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { randomUUID } from 'node:crypto';
 import { ClusterRpcService } from '../cluster/cluster-rpc.service';
 import { LeaseService } from '../cluster/lease.service';
+import { CTI_ROLE, CtiRole, roleOwnsPbx } from '../cluster/cluster.types';
 import { TenantRegistryService, ResolvedTenant, REGISTRY_RELOADED } from '../tenants/tenant-registry.service';
 import { SupervisedConnection, ConnectionTarget } from './supervised-connection';
 import type { AmiMessage } from './ami-client';
@@ -31,6 +32,7 @@ export class PbxSupervisorService implements OnModuleInit, OnModuleDestroy {
     private readonly bus: EventEmitter2,
     private readonly leases: LeaseService,
     private readonly rpc: ClusterRpcService,
+    @Inject(CTI_ROLE) private readonly role: CtiRole,
   ) {}
 
   onModuleInit(): void {
@@ -104,6 +106,11 @@ export class PbxSupervisorService implements OnModuleInit, OnModuleDestroy {
    * joins the cluster takes its share without anyone coordinating.
    */
   private async sweep(): Promise<void> {
+    // Only a connector role may own PBX sockets. An `api` replica still holds
+    // a supervisor — it is what routes commands to the owning replica over
+    // RPC — but it must never claim a connection for itself.
+    if (!roleOwnsPbx(this.role)) return;
+
     for (const [id, target] of this.targets) {
       if (this.connections.has(id)) continue;
       // A reverse connection is only serveable where its tunnel landed, so

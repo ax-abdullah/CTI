@@ -15,7 +15,8 @@
     "typeorm": "typeorm-ts-node-commonjs -d src/data-source.ts",
     "migration:generate": "npm run typeorm -- migration:generate",
     "migration:run": "npm run typeorm -- migration:run",
-    "migration:revert": "npm run typeorm -- migration:revert"
+    "migration:revert": "npm run typeorm -- migration:revert",
+    "migrate": "node --env-file=.env dist/migrate.js"
   },
   "dependencies": {
     "@nest-lab/throttler-storage-redis": "^1.2.0",
