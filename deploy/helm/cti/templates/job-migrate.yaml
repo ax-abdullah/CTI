@@ -1,0 +1,57 @@
+{{- if .Values.migrations.enabled }}
+{{- /*
+Migrations run exactly once per release, before any pod starts.
+
+The app deliberately no longer applies them at boot: N replicas starting
+together would race the same DDL, and TypeORM takes no advisory lock — so two
+runners can both see a migration as pending, both execute it, and the loser
+dies on a duplicate object (or a data migration applies twice).
+
+hook-failed is NOT deleted on purpose: when a migration fails you want the Job
+and its logs still there to read. `before-hook-creation` clears the previous
+successful Job on the next upgrade so they do not accumulate.
+*/ -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "cti.fullname" . }}-migrate
+  labels:
+    {{- include "cti.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "cti.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "cti.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: migrate
+          image: {{ include "cti.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Not `npm run migrate` — that variant loads a local .env file, which
+          # does not exist in the image. Env comes from the orchestrator here.
+          command: ["node", "dist/migrate.js"]
+          envFrom:
+            {{- include "cti.envFrom" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+{{- end }}

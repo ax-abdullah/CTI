@@ -1,0 +1,103 @@
+{{- if .Values.keda.enabled }}
+{{- /*
+The three workloads scale on genuinely different signals. That asymmetry is
+the whole reason they are separate Deployments.
+
+Note what is NOT used: `cti_queue_jobs`. It is derived from Redis, so every
+replica reports the same global number — summing it across pods multiplies by
+replica count. KEDA reads queue depth from Redis directly instead, which
+sidesteps the aggregation entirely.
+*/ -}}
+{{- if .Values.worker.autoscaling.enabled }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "cti.fullname" . }}-worker
+  labels:
+    {{- include "cti.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  scaleTargetRef:
+    name: {{ include "cti.fullname" . }}-worker
+  pollingInterval: {{ .Values.keda.pollingInterval }}
+  cooldownPeriod: {{ .Values.keda.cooldownPeriod }}
+  # Not 0: scale-to-zero would add a cold start to the first CRM write after
+  # an idle spell, and CRM logging is the product. One small pod is cheaper.
+  minReplicaCount: {{ .Values.worker.autoscaling.minReplicas }}
+  maxReplicaCount: {{ .Values.worker.autoscaling.maxReplicas }}
+  triggers:
+    {{- /* One trigger per queue: a backlog on any single CRM should scale the
+           pool, and BullMQ keeps waiting jobs in a list per queue. */}}
+    {{- range $queue := list "webhook-delivery" "zoho-delivery" "salesforce-delivery" "hubspot-delivery" "dynamics-delivery" }}
+    - type: redis
+      metadata:
+        addressFromEnv: REDIS_ADDRESS
+        listName: bull:{{ $queue }}:wait
+        listLength: {{ $.Values.worker.autoscaling.queueDepthPerPod | quote }}
+    {{- end }}
+{{- end }}
+
+{{- if .Values.api.autoscaling.enabled }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "cti.fullname" . }}-api
+  labels:
+    {{- include "cti.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  scaleTargetRef:
+    name: {{ include "cti.fullname" . }}-api
+  pollingInterval: {{ .Values.keda.pollingInterval }}
+  cooldownPeriod: {{ .Values.keda.cooldownPeriod }}
+  minReplicaCount: {{ .Values.api.autoscaling.minReplicas }}
+  maxReplicaCount: {{ .Values.api.autoscaling.maxReplicas }}
+  triggers:
+    {{- if .Values.keda.prometheusAddress }}
+    # Agent softphone sockets are long-lived and mostly idle, so CPU barely
+    # moves with load. Connection count is the honest signal. This gauge IS
+    # per-pod, so sum() is the true cluster total.
+    - type: prometheus
+      metadata:
+        serverAddress: {{ .Values.keda.prometheusAddress | quote }}
+        query: sum(cti_softphone_clients{job=~".*{{ include "cti.fullname" . }}-api.*"})
+        threshold: {{ .Values.api.autoscaling.softphoneClientsPerPod | quote }}
+    {{- end }}
+    # CPU as the backstop, for request-heavy load that carries no sockets.
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: {{ .Values.api.autoscaling.cpuUtilization | quote }}
+{{- end }}
+
+{{- if .Values.connector.autoscaling.enabled }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "cti.fullname" . }}-connector
+  labels:
+    {{- include "cti.labels" . | nindent 4 }}
+    app.kubernetes.io/component: connector
+spec:
+  scaleTargetRef:
+    name: {{ include "cti.fullname" . }}-connector
+  pollingInterval: {{ .Values.keda.pollingInterval }}
+  cooldownPeriod: {{ .Values.keda.cooldownPeriod }}
+  minReplicaCount: {{ .Values.connector.autoscaling.minReplicas }}
+  maxReplicaCount: {{ .Values.connector.autoscaling.maxReplicas }}
+  triggers:
+    # Inventory, not load. A PBX has a fixed number of AMI sessions worth
+    # opening — exactly one — so adding connector replicas under call volume
+    # achieves nothing. What does require more replicas is more PBXs.
+    - type: postgresql
+      metadata:
+        connectionFromEnv: {{ .Values.keda.postgresConnectionFromEnv }}
+        query: >-
+          SELECT ceil(count(*)::float / {{ .Values.connector.connectionsPerPod }})
+          FROM pbx_connections
+        targetQueryValue: "1"
+{{- end }}
+{{- end }}

@@ -18,7 +18,7 @@ The platform is feature-complete but **not yet production-safe**: zero automated
 | **11 — Advanced telephony (ARI)** ✅ | Expansion | ARI connector; in-call coaching (whisper/barge/spy); queue/ACD; CRM-driven IVR | **Done** — coaching Originate and the queue wallboard both execute live (`waiting` → `abandoned` observed); ARI connector + IVR routing unit/integration-tested (92 tests). Coached *audio* needs registered SIP phones; the ARI/Stasis path needs `http.conf`/`ari.conf` |
 | **12a — Horizontal scale: correctness at N>1** ✅ | Hardening | Single-writer PBX ownership (Redis leases); cluster event bus; cross-pod command RPC; shared presence/queue-stats; registry fan-out | **Done** — verified live: 2 replicas + 1 call → **exactly 1 CRM write per integration** (was 2); `SIGTERM` on the owner → peer took over in ~5s; one `/admin/reload` reloaded both pods; a replica owning nothing returns identical `/v1/agents/state` and `/v1/queues`. 92 tests |
 | **12b — Role split & operability** ✅ | Hardening | `CTI_ROLE=api\|connector\|worker`; autoscaling metrics; graceful WebSocket drain; pool sizing; migrations as a separate entrypoint | **Done** — verified live: each role boots standalone; connector holds the only AMI socket and lease, worker delivers all jobs, api/connector deliver none; `cti_leases_held` 1 on connector vs 0 on api |
-| **12c — Kubernetes** ⬜ | Hardening | Helm chart; KEDA autoscaling; ingress with WebSocket upgrade; migration Job; CI image build/push | Autoscaling observed under load |
+| **12c — Kubernetes** ✅ | Hardening | Helm chart; KEDA autoscaling; ingress with WebSocket upgrade; migration Job; CI image build/push | **Done** — chart lints, renders 15 objects and validates against live k8s schemas; `replicas` correctly omitted where KEDA owns it; tunnels path-routed to `connector`; probes never touch plain `/health`. CI lints + renders the chart per PR and pushes the image on `main` |
 
 ---
 
@@ -141,6 +141,16 @@ One image, `CTI_ROLE=api|connector|worker`, so the three concerns scale on their
 
 **Verified live:** all three roles boot standalone; the connector holds the only AMI socket and the only lease; the worker delivered all three webhook jobs while api and connector delivered none; `api` returns 404 for `/v1/...` while still serving `/health/ready` and `/metrics`; `cti_leases_held` reads 1 on the connector and 0 on the api replica.
 
-### 12c — Kubernetes ⬜
+### 12c — Kubernetes ✅
 
-Helm chart at `deploy/helm/cti`; KEDA scaling — queue depth for workers, WebSocket count for API, and **PBX inventory** for connectors, which scale with how many PBXs exist rather than with call load; ingress routing `/connector-ws` and `/connector-files` to the connector service with buffering off and long read timeouts; migrations as a `pre-install,pre-upgrade` Job.
+[deploy/helm/cti](../deploy/helm/cti) deploys the three roles as separate workloads. Setup: [INSTALL §15](./INSTALL.md).
+
+- **One templated Deployment, three roles.** They differ only in `CTI_ROLE`, resources and how they drain, so generating them from one template avoids three near-identical files drifting apart.
+- **`replicas` is omitted wherever an autoscaler owns it**, so a `helm upgrade` cannot silently reset a scaled-out deployment back to the chart default.
+- **KEDA triggers match each workload's real signal:** queue depth from Redis for `worker`; `cti_softphone_clients` plus CPU for `api`; and for `connector`, a Postgres row count — it scales with **PBX inventory, not call load**, since a PBX is worth exactly one AMI session. `cti_queue_jobs` is deliberately *not* used: every replica reports the same Redis-derived number, so summing it multiplies by replica count.
+- **Ingress path-routes the tunnels.** `/connector-ws` and `/connector-files` must reach a `connector` pod, because whichever pod terminates a tunnel force-claims ownership of that PBX. `proxy-buffering: off` + 3600s timeouts are the nginx equivalent of Caddy's `flush_interval -1`.
+- **Migrations as a `pre-install,pre-upgrade` hook**, left in place on failure so the logs survive.
+- **Probes:** `/health/live` and `/health/ready` only. Plain `/health` reports just this replica's owned connections and always returns 200, so it would be a useless probe.
+- **CI** lints and renders the chart on every PR and pushes the image to GHCR on `main`.
+
+**Verified:** `helm lint` clean; `helm template` renders 15 objects; all validate via `kubectl apply --dry-run=client`. Not yet run against a live cluster with KEDA — that needs one.

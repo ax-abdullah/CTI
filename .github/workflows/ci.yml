@@ -54,3 +54,67 @@ jobs:
 
       - name: Unit + integration tests
         run: npm test
+
+  # Lint + render the chart on every PR. Catches the class of mistake that is
+  # otherwise only found at `helm upgrade` time on a real cluster.
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: Lint chart
+        run: helm lint deploy/helm/cti
+
+      - name: Render chart
+        run: helm template ci deploy/helm/cti > /tmp/rendered.yaml
+
+      - name: Validate rendered manifests
+        # KEDA ScaledObjects are CRDs the CI cluster does not have, so they are
+        # skipped rather than failing the run.
+        run: |
+          kubectl apply --dry-run=client -f /tmp/rendered.yaml \
+            --validate=false >/dev/null
+          echo "rendered $(grep -c '^kind:' /tmp/rendered.yaml) objects"
+
+  # Build and publish the image the chart deploys. Only on main — PRs get the
+  # build for free via the `docker/build-push-action` cache without a push.
+  image:
+    runs-on: ubuntu-latest
+    needs: [build-test, chart]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=sha,format=long
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -4,7 +4,7 @@
 
 - **Targets:** production FreePBX servers + the lab `Multi-Tenant-Asterisk` Docker project (prototyping)
 - **Stack:** a dedicated **NestJS (TypeScript)** application — Redis for live call state, PostgreSQL for the tenant registry
-- **Status:** **built and validated through Phase 12a** — the platform is horizontally scalable (§9). For the current feature set see [docs/FEATURES.md](./docs/FEATURES.md), the design decisions in [docs/adr/](./docs/adr/README.md), setup in [docs/INSTALL.md](./docs/INSTALL.md), running more than one replica in [docs/SCALING.md](./docs/SCALING.md), and the live API at `/docs`. (This began as a design doc; it now doubles as the architecture explainer.)
+- **Status:** **built and validated through Phase 12c** — the platform is horizontally scalable (§9). For the current feature set see [docs/FEATURES.md](./docs/FEATURES.md), the design decisions in [docs/adr/](./docs/adr/README.md), setup in [docs/INSTALL.md](./docs/INSTALL.md), running more than one replica in [docs/SCALING.md](./docs/SCALING.md), and the live API at `/docs`. (This began as a design doc; it now doubles as the architecture explainer.)
 - **See it whole:** [docs/architecture.html](./docs/architecture.html) is an interactive diagram of the built system — every component in this document as a clickable box, plus seven traceable call flows (inbound screen pop, click-to-call, call logging, restart resync, supervisor coaching, firewalled PBX, ARI routing). Self-contained; open it in any browser.
 
 > **As-built note.** The design below held up; a few concrete choices diverged from the original sketch and are worth flagging so this document isn't misleading:
@@ -12,7 +12,7 @@
 > - **CRM adapters are one module per CRM** (`ZohoModule`, `SalesforceModule`, `HubSpotModule`, `DynamicsModule`), not a single `CrmAdaptersModule` with a `CrmAdapter` interface — each follows the same dispatcher/processor/queue shape ([ADR-0006](./docs/adr/0006-crm-adapter-models.md), [ADR-0010](./docs/adr/0010-webrtc-softphone-and-crm-expansion.md)).
 > - **ORM is TypeORM** (with real migrations, not `synchronize`); **WebSockets use `ws`** (`@nestjs/platform-ws`), not socket.io; **AMI secrets/CRM tokens are AES-256-GCM** under one master key (`CryptoService`), not libsodium.
 > - **Reverse on-prem connector** (customer dials out; no inbound holes) and **recordings pulled over that tunnel** are built ([ADR-0007](./docs/adr/0007-reverse-onprem-connector.md)/[0008](./docs/adr/0008-signed-capability-urls-for-recordings.md)/[0009](./docs/adr/0009-tls-terminating-reverse-proxy-deployment.md)). **WebRTC softphone** (in-browser audio via self-hosted JsSIP) is built; real two-way audio needs a WebRTC-configured PBX. The **ARI connector** and advanced telephony (in-call coaching, queue/ACD wallboard, CRM-driven IVR) are built ([ADR-0011](./docs/adr/0011-ari-advanced-telephony.md)) — the door ADR-0001 left open. The **queue wallboard is verified live**, and note it runs on plain AMI `app_queue` events, *not* Stasis; only coached audio (registered SIP phones) and the ARI/Stasis path itself (`http.conf`/`ari.conf`) remain unexercised live.
-> - **This document described a single process until Phase 12.** It was not merely un-tuned for replicas — two replicas produced *two of every CRM record*, because each opened its own AMI socket and independently ran the §3 correlation engine. §9 covers what changed: single-writer ownership by Redis lease, a cluster event bus, and cross-pod command routing ([ADR-0012](./docs/adr/0012-single-writer-ownership-for-horizontal-scale.md)/[0013](./docs/adr/0013-cluster-event-bus-and-exactly-once-enqueue.md)). **Roadmap phases 0–11 are complete; Phase 12a is done, 12b/12c (role split, Helm/KEDA) remain.**
+> - **This document described a single process until Phase 12.** It was not merely un-tuned for replicas — two replicas produced *two of every CRM record*, because each opened its own AMI socket and independently ran the §3 correlation engine. §9 covers what changed: single-writer ownership by Redis lease, a cluster event bus, and cross-pod command routing ([ADR-0012](./docs/adr/0012-single-writer-ownership-for-horizontal-scale.md)/[0013](./docs/adr/0013-cluster-event-bus-and-exactly-once-enqueue.md)). **All roadmap phases 0–12 are complete.**
 
 ---
 
@@ -492,9 +492,9 @@ Two sockets are leased separately (`ami`, `files`) because a connector agent ope
 
 **Redis becomes a correctness dependency, not a cache** — leases live there. It must be HA before production. That is the real cost of this design.
 
-### 9.7 Scaling signals (12b/12c)
+### 9.7 Scaling signals
 
-The three concerns scale on different signals, which is why the next phase splits them into separate workloads (`CTI_ROLE=api|connector|worker`) rather than adding identical replicas.
+The three concerns scale on different signals, which is why they are separate workloads (`CTI_ROLE=api|connector|worker`) rather than identical replicas. Deployed by [deploy/helm/cti](./deploy/helm/cti); see [docs/INSTALL.md §15](./docs/INSTALL.md).
 
 ```mermaid
 flowchart LR
@@ -508,4 +508,4 @@ flowchart LR
 
 Note the asymmetry: **connectors scale with inventory, not load.** A PBX has a fixed number of AMI sessions worth opening, so adding connector replicas under call load would be useless at best. Only `api` and `worker` are demand-driven.
 
-Until 12b lands, scale by adding identical replicas — correct, just not independently scalable.
+`cti_queue_jobs` is deliberately absent from the diagram: it is derived from Redis, so every replica reports the same global number and summing it across pods multiplies by replica count. KEDA reads queue depth from Redis directly instead.

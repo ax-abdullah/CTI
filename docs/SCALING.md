@@ -186,10 +186,8 @@ Every role listens on `PORT` — `connector` and `worker` still answer `/health/
 | `cti_active_calls` | yes | capacity |
 | `cti_queue_jobs` | **no — global** | `worker`. Aggregate with `max()`; `sum()` multiplies by replica count |
 
-## Not yet built
+## Deploying on Kubernetes
 
 Phase 12a made replicas *safe*. Two pieces of the plan remain:
 
-- **12c — Kubernetes.** Helm chart, KEDA autoscaling (queue depth for workers, WebSocket count for API, connection count for connectors), ingress with WebSocket upgrade, migrations as a pre-upgrade Job.
-
-Until then, deploy the roles as separate processes or compose services — the split works today, it simply has no autoscaler driving it.
+Nothing. Phases 12a–12c are complete: replicas are safe, the roles are split, and [deploy/helm/cti](../deploy/helm/cti) deploys and autoscales them. See [INSTALL §15](./INSTALL.md).

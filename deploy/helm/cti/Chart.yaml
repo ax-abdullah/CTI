@@ -1,0 +1,17 @@
+apiVersion: v2
+name: cti
+description: |
+  Multi-tenant CTI middleware connecting Asterisk/FreePBX to CRMs.
+
+  Deploys one image as three workloads that scale on different signals:
+  `connector` with the number of PBXs, `api` with agent traffic, `worker`
+  with delivery backlog. See docs/SCALING.md.
+type: application
+version: 0.1.0
+appVersion: "0.5.0"
+keywords: [cti, asterisk, telephony, crm]
+home: https://github.com/your-org/cti
+annotations:
+  # Redis holds the PBX ownership leases (ADR-0012), so it is a correctness
+  # dependency rather than a cache. Run it HA before production.
+  requires: "PostgreSQL, Redis (HA), and KEDA if autoscaling is enabled"

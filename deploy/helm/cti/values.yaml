@@ -1,0 +1,162 @@
+# CTI platform — Helm values.
+#
+# The three workloads scale on genuinely different signals, which is why they
+# are separate Deployments rather than one autoscaled pool:
+#   connector -> number of PBX connections (inventory, NOT call load)
+#   api       -> agent WebSockets + HTTP traffic
+#   worker    -> CRM delivery backlog
+
+image:
+  repository: ghcr.io/your-org/cti
+  tag: ""            # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# ---------------------------------------------------------------- app config
+# Non-secret settings, rendered into a ConfigMap. Every replica gets the same
+# values — roles differ only by CTI_ROLE, which the templates set per workload.
+config:
+  PORT: "3000"
+  LOG_FORMAT: json
+  PUBLIC_BASE_URL: https://cti.example.com
+  REDIS_HOST: cti-redis-master
+  REDIS_PORT: "6379"
+  ORIGINATE_RATE_LIMIT: "30"
+  ORIGINATE_RATE_TTL_SEC: "60"
+  # Ownership leases (ADR-0012). Lower TTL = faster failover after a hard pod
+  # kill, at the cost of more Redis traffic. Renewal must stay well below it.
+  LEASE_TTL_MS: "30000"
+  LEASE_RENEW_MS: "10000"
+  CLUSTER_RPC_TIMEOUT_MS: "15000"
+  # Per-replica Postgres pool. The cluster total is this x total replicas, so
+  # raising it is how you exhaust a managed Postgres by accident.
+  DB_POOL_MAX: "10"
+
+# Secrets. For anything real, set `existingSecret` and manage the values with
+# an external secrets operator or sealed-secrets rather than putting them here.
+secrets:
+  existingSecret: ""
+  create: true
+  values:
+    DATABASE_URL: postgres://cti:change-me@cti-postgresql:5432/cti
+    CREDS_KEY: ""                # openssl rand -hex 32
+    SOFTPHONE_JWT_SECRET: ""     # openssl rand -hex 24
+    RECORDINGS_URL_SECRET: ""    # openssl rand -hex 24
+    ADMIN_API_KEY: ""            # openssl rand -hex 24
+
+# ------------------------------------------------------------------ workloads
+api:
+  replicaCount: 2
+  resources:
+    requests: { cpu: 100m, memory: 192Mi }
+    limits:   { memory: 512Mi }
+  # 5s of preStop lets endpoints propagate before the process starts refusing
+  # work, so in-flight requests are not cut mid-response.
+  preStopSleepSeconds: 5
+  terminationGracePeriodSeconds: 30
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 20
+    # Primary signal: agent WebSockets are long-lived, so connection count
+    # tracks load far better than CPU on a mostly-IO-bound Node process.
+    softphoneClientsPerPod: 200
+    cpuUtilization: 70
+
+connector:
+  # Deliberately NOT demand-scaled: a PBX has a fixed number of AMI sessions
+  # worth opening, so more replicas under call load buys nothing.
+  replicaCount: 2
+  connectionsPerPod: 25
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { memory: 768Mi }
+  # Longer than api: leases are released first so a peer can take the PBX over
+  # in ~5s instead of waiting out the lease TTL.
+  preStopSleepSeconds: 5
+  terminationGracePeriodSeconds: 45
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  autoscaling:
+    # Scales on PBX inventory (a Postgres row count), not traffic.
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+
+worker:
+  replicaCount: 2
+  resources:
+    requests: { cpu: 100m, memory: 192Mi }
+    limits:   { memory: 512Mi }
+  preStopSleepSeconds: 2
+  # Generous: a job already in flight against a slow CRM should finish rather
+  # than be retried from scratch.
+  terminationGracePeriodSeconds: 120
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  autoscaling:
+    enabled: true
+    # Not 0. Scale-to-zero is supported but adds cold-start latency to the
+    # first CRM write after an idle period, for the price of one small pod.
+    minReplicas: 1
+    maxReplicas: 30
+    queueDepthPerPod: 50
+
+# ------------------------------------------------------------------ autoscaling
+keda:
+  enabled: true
+  pollingInterval: 15
+  cooldownPeriod: 120
+  # Reachable Prometheus for the api trigger. Leave blank to fall back to CPU.
+  prometheusAddress: http://prometheus-server.monitoring.svc:80
+  # Used by the connector trigger; a read-only role is enough.
+  postgresConnectionFromEnv: DATABASE_URL
+
+# ------------------------------------------------------------------- migrations
+# Applied by a pre-install/pre-upgrade hook Job, never at app boot: N replicas
+# starting together would race the same DDL with no advisory lock.
+migrations:
+  enabled: true
+  backoffLimit: 1
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+
+# ---------------------------------------------------------------------- ingress
+ingress:
+  enabled: true
+  className: nginx
+  host: cti.example.com
+  tls:
+    enabled: true
+    secretName: cti-tls
+  annotations:
+    # The load-bearing settings for long-lived sockets — the equivalent of
+    # Caddy's `flush_interval -1` in the compose deployment. Without these the
+    # reverse connector tunnel and agent softphones are cut by proxy timeouts.
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+
+serviceMonitor:
+  enabled: false
+  interval: 15s
+  labels: {}
+
+nodeSelector: {}
+tolerations: []
+# Spread replicas of a workload across nodes so one node loss cannot take a
+# whole role down.
+topologySpreadEnabled: true

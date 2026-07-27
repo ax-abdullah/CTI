@@ -1,0 +1,25 @@
+{{- /*
+Two Services, because the ingress must route by path: the customer's reverse
+connector tunnels have to terminate on a `connector` pod (that pod then owns
+the PBX), while everything else is served by `api`. `worker` gets no Service —
+nothing routes to it; it pulls work from Redis.
+*/ -}}
+{{- range $role := list "api" "connector" }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cti.fullname" $ }}-{{ $role }}
+  labels:
+    {{- include "cti.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $role }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "cti.selectorLabels" (dict "root" $ "role" $role) | nindent 4 }}
+{{- end }}

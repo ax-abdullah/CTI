@@ -1,0 +1,54 @@
+{{- if .Values.ingress.enabled }}
+{{- /*
+Path routing matters here, it is not cosmetic.
+
+The on-prem connector agent dials OUT to /connector-ws (and /connector-files);
+whichever pod terminates that socket force-claims ownership of the PBX, because
+a tunnelled connection can only be served where the socket physically is
+(ADR-0012). Those paths must therefore reach a `connector` pod. Everything else
+— the tenant API, the agent softphone WebSocket, /admin, Swagger — is served by
+`api`, and needs no session affinity: events reach every replica over the
+cluster bus, and commands are routed to whichever replica owns the PBX.
+
+The two tunnel paths are listed before the catch-all because nginx-ingress
+matches the longest prefix, and being explicit here is cheaper than debugging
+why a customer's tunnel keeps landing on an api pod.
+*/ -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "cti.fullname" . }}
+  labels:
+    {{- include "cti.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts: [{{ .Values.ingress.host | quote }}]
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /connector-ws
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "cti.fullname" . }}-connector
+                port: { name: http }
+          - path: /connector-files
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "cti.fullname" . }}-connector
+                port: { name: http }
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "cti.fullname" . }}-api
+                port: { name: http }
+{{- end }}

@@ -259,6 +259,59 @@ Exactly one replica should list a given connection under `owned`; the `leases` a
 
 > **Don't use `GET /health` as a Kubernetes probe.** It reports only the connections *this* replica owns, so a replica holding none reports `degraded` — and it always returns HTTP 200 regardless. Use `/health/ready` (Postgres + Redis, returns 503 on failure) for readiness and `/health/live` for liveness.
 
+## 15. Kubernetes (Helm)
+
+Chart at [deploy/helm/cti](../deploy/helm/cti). It deploys the three roles as separate workloads, because they scale on genuinely different signals.
+
+**Prerequisites**
+
+| | |
+|---|---|
+| PostgreSQL + **HA Redis** | Redis holds the ownership leases (ADR-0012) — a correctness dependency, not a cache |
+| [KEDA](https://keda.sh) | only if `keda.enabled` (the default). Without it, set the three `autoscaling.enabled: false` and manage replica counts yourself |
+| An ingress controller | the chart's annotations assume `nginx`; adapt them for anything else |
+
+```bash
+helm upgrade --install cti deploy/helm/cti \
+  --set ingress.host=cti.example.com \
+  --set secrets.values.CREDS_KEY=$(openssl rand -hex 32) \
+  --set secrets.values.SOFTPHONE_JWT_SECRET=$(openssl rand -hex 24) \
+  --set secrets.values.RECORDINGS_URL_SECRET=$(openssl rand -hex 24) \
+  --set secrets.values.ADMIN_API_KEY=$(openssl rand -hex 24)
+```
+
+For anything real, set `secrets.existingSecret` instead and manage the values with an external secrets operator — values passed to Helm are stored in the release history in plain text.
+
+**Migrations run as a `pre-install,pre-upgrade` hook Job**, before any pod starts. If it fails the release stops, and the Job is deliberately left in place so you can read its logs.
+
+**What the ingress routes where, and why it matters**
+
+| Path | Service | Reason |
+|---|---|---|
+| `/connector-ws`, `/connector-files` | `connector` | the pod terminating a customer's tunnel force-claims ownership of that PBX, so the tunnel must land on a connector |
+| everything else | `api` | no session affinity needed — events reach every replica over the cluster bus |
+
+The `proxy-buffering: off` and 3600s timeout annotations are load-bearing: they are the nginx equivalent of Caddy's `flush_interval -1`, without which long-lived tunnels and agent softphones are cut by proxy timeouts.
+
+**Autoscaling**
+
+| Workload | Scales on | Note |
+|---|---|---|
+| `worker` | BullMQ queue depth, read from Redis | `minReplicaCount: 1`, not 0 — scale-to-zero adds a cold start to the first CRM write after idle |
+| `api` | `cti_softphone_clients` (Prometheus) + CPU | agent sockets are long-lived and mostly idle, so CPU alone underestimates load |
+| `connector` | **PBX inventory** — `count(pbx_connections)` in Postgres | off by default. Deliberately not demand-scaled: a PBX is worth exactly one AMI session, so more replicas under call load buys nothing |
+
+**Probes** — `/health/live` for liveness, `/health/ready` for readiness. Do **not** use `/health`: it reports only the connections *this* replica owns (empty is normal on `api`) and always returns 200.
+
+Validate changes before deploying:
+
+```bash
+helm lint deploy/helm/cti
+helm template cti deploy/helm/cti | kubectl apply --dry-run=client -f -
+```
+
+CI runs both on every PR, and builds/pushes the image to GHCR on `main`.
+
 ## 12. Production checklist
 
 - [x] TLS/WSS terminated by a reverse proxy (Caddy); connector agents dial `wss://`
@@ -268,4 +321,5 @@ Exactly one replica should list a given connection under `owned`; the `leases` a
 - [ ] Real Zoho/Salesforce orgs instead of the `scripts/mock-*.mjs` servers (§11)
 - [ ] Secrets from a manager/KMS; rotate `ADMIN_API_KEY`; `.env` out of git (already ignored)
 - [ ] Point Prometheus at `/metrics` and wire Alertmanager to the `failed`/`connection_down` series (or the structured `alert` logs)
+- [ ] Kubernetes: deployed via the Helm chart (§15); migrations run as the pre-upgrade Job, not at app boot
 - [ ] If running >1 replica: Redis is **HA** (it holds the ownership leases), every replica shares the same Redis + Postgres, and `/health/ready` — not `/health` — is wired to the readiness probe (§14)

@@ -13,23 +13,25 @@ Multi-tenant CTI middleware connecting Asterisk/FreePBX to CRMs — click-to-cal
 | [docs/FEATURES.md](./docs/FEATURES.md) | Feature catalog — how each works and its endpoints |
 | **`/docs` (Swagger UI)** | Live, interactive API reference with all four auth schemes — served by the running app |
 | [docs/postman/](./docs/postman/CTI-Platform.postman_collection.json) | Postman collection: every endpoint with request + example responses |
+| [deploy/helm/cti](./deploy/helm/cti) | **Helm chart** — three workloads, KEDA autoscaling, path-routed ingress, migration hook Job |
 | [docs/SCALING.md](./docs/SCALING.md) | **Running more than one replica** — the ownership invariant, what's shared in Redis, handover/failover behaviour, and a troubleshooting flowchart |
 | [docs/adr/](./docs/adr/README.md) | Architecture Decision Records 0001–0013 (AMI-over-ARI, correlation engine, multi-tenancy, reverse connector, deployment, WebRTC/CRM expansion, ARI + advanced telephony, single-writer ownership, cluster event bus) |
-| [docs/ROADMAP.md](./docs/ROADMAP.md) | Roadmap with per-phase status — phases 0–11 complete, 12a done, 12b/12c remaining |
+| [docs/ROADMAP.md](./docs/ROADMAP.md) | Roadmap with per-phase status — all phases 0–12 complete |
 | [cti-architecture.md](./cti-architecture.md) | Architecture explainer + sequence diagrams (with an as-built note) |
 
 ## Status
 
-Built and validated through **Phase 12b**. What's implemented:
+Built and validated through **Phase 12c**. What's implemented:
 
 - **Core (P1–2):** hand-rolled AMI connector, Linkedid call-state correlation → normalized `call.*` events, multi-tenant registry (shared-PBX routing, encrypted creds, scoped API keys), generic signed webhooks over durable BullMQ.
 - **CRMs (P3–4, P10):** Zoho PhoneBridge, Salesforce Open CTI, HubSpot, Microsoft Dynamics 365 — a tenant can enable several; logging fans out to each.
 - **Productization (P5):** reverse on-prem connector (no inbound firewall holes), recording proxy with signed URLs, agent presence, admin API + dashboard with hot-reload.
-- **Hardening (P6–9):** 76-test Jest suite + CI, TypeORM migrations, Redis-backed call-state + `CoreShowChannels` resync, per-tenant originate rate-limit, graceful shutdown, structured JSON logs, Prometheus `/metrics`, readiness/liveness probes, dead-letter alerting + retry UI, multi-stage Docker image + Caddy TLS/wss reverse proxy, recordings pulled over the reverse tunnel.
+- **Hardening (P6–9):** Jest suite (92 tests today) + CI, TypeORM migrations, Redis-backed call-state + `CoreShowChannels` resync, per-tenant originate rate-limit, graceful shutdown, structured JSON logs, Prometheus `/metrics`, readiness/liveness probes, dead-letter alerting + retry UI, multi-stage Docker image + Caddy TLS/wss reverse proxy, recordings pulled over the reverse tunnel.
 - **WebRTC softphone (P10):** in-browser audio via self-hosted JsSIP (real two-way audio needs a WebRTC-configured PBX).
 - **Advanced telephony (P11):** ARI connector (Stasis → same normalized events), in-call coaching (spy/whisper/barge), queue/ACD wallboard, CRM-driven IVR routing.
 - **Horizontal scale (P12a):** safe to run **more than one replica**. A PBX connection is driven by exactly one replica (Redis lease), events reach every replica over a cluster bus so agent sockets stay live, commands route to whichever replica holds a PBX socket, and presence/queue-stats/call-state are all shared. See [docs/SCALING.md](./docs/SCALING.md).
 - **Role split (P12b):** one image, `CTI_ROLE=api|connector|worker` (default `all`), so the three concerns scale on their own signals — user traffic, PBX inventory, and queue depth. Delivery producers live with the connector, keeping enqueue exactly-once by construction. Adds the autoscaling metrics, WebSocket drain on shutdown, per-replica pool sizing, and `npm run migrate` so replicas no longer race DDL at boot.
+- **Kubernetes (P12c):** Helm chart at [deploy/helm/cti](./deploy/helm/cti) — three workloads, KEDA autoscaling on each one's real signal (queue depth, agent sockets, PBX inventory), path-routed ingress so customer tunnels reach a connector, and migrations as a pre-upgrade Job. See [INSTALL §15](./docs/INSTALL.md).
 
 **Truly pending (operational, not code):** real Zoho/Salesforce/HubSpot/Dynamics org credentials (see [INSTALL §11](./docs/INSTALL.md)); a WebRTC-enabled Asterisk for live browser media; registered SIP phones for audible coaching; and `http.conf`/`ari.conf` + a Stasis dialplan to exercise the ARI driver live. The **queue wallboard is verified live** (it runs on AMI `app_queue` events, not ARI).
 
