@@ -1,6 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
+import type { Redis } from 'ioredis';
 import { AmiMessage } from '../pbx-connector/ami-client';
+import { REDIS_CLIENT } from '../redis/redis.module';
 
 interface QueueStat {
   connectionId: string;
@@ -13,6 +15,11 @@ interface QueueStat {
   members: Map<string, { available: boolean }>;
 }
 
+/** JSON-safe projection of a QueueStat for Redis (Map → object). */
+interface QueueStatSnapshot extends Omit<QueueStat, 'members'> {
+  members: Record<string, { available: boolean }>;
+}
+
 export const QUEUE_STATS_EVENT = 'queue.stats';
 
 /**
@@ -20,17 +27,33 @@ export const QUEUE_STATS_EVENT = 'queue.stats';
  * events. Keyed by (connectionId, queue). Emits `queue.stats` on change so
  * the softphone/supervisor WebSocket can stream a wallboard; snapshot() backs
  * GET /v1/queues.
+ *
+ * Aggregation happens in memory on the pod that owns the connection — it is
+ * the only pod receiving that PBX's events — but the totals are written
+ * through to Redis and hydrated back on first touch. Two reasons (ADR-0012):
+ * GET /v1/queues is answered by whichever replica the request reaches, and
+ * counters would otherwise reset to zero whenever ownership moved, making the
+ * wallboard flicker through every rolling deploy.
  */
 @Injectable()
 export class QueueStatsService {
+  private readonly logger = new Logger(QueueStatsService.name);
   private readonly stats = new Map<string, QueueStat>();
+  private readonly ttlSec = 24 * 3600;
 
-  constructor(private readonly bus: EventEmitter2) {}
+  constructor(
+    private readonly bus: EventEmitter2,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
+  ) {}
+
+  private static key(connectionId: string, queue: string): string {
+    return `cti:qstats:${connectionId}:${queue}`;
+  }
 
   @OnEvent('ami.event')
-  onAmiEvent({ connectionId, msg }: { connectionId: string; msg: AmiMessage }): void {
+  async onAmiEvent({ connectionId, msg }: { connectionId: string; msg: AmiMessage }): Promise<void> {
     if (!msg.Queue) return;
-    const stat = this.get(connectionId, msg.Queue);
+    const stat = await this.get(connectionId, msg.Queue);
     switch (msg.Event) {
       case 'QueueCallerJoin':
         stat.waiting = this.count(msg.Count, stat.waiting + 1);
@@ -62,24 +85,79 @@ export class QueueStatsService {
       default:
         return;
     }
+    this.persist(stat);
     this.bus.emit(QUEUE_STATS_EVENT, this.view(stat));
   }
 
   /** Wallboard snapshot, optionally limited to a set of connections. */
-  snapshot(connectionIds?: string[]) {
-    return [...this.stats.values()]
+  async snapshot(connectionIds?: string[]) {
+    const snaps = await this.scan();
+    return snaps
       .filter((s) => !connectionIds || connectionIds.includes(s.connectionId))
-      .map((s) => this.view(s));
+      .map((s) => this.view(this.fromSnapshot(s)));
   }
 
-  private get(connectionId: string, queue: string): QueueStat {
+  private async get(connectionId: string, queue: string): Promise<QueueStat> {
     const key = `${connectionId}:${queue}`;
-    let stat = this.stats.get(key);
-    if (!stat) {
-      stat = { connectionId, queue, waiting: 0, answered: 0, abandoned: 0, totalHoldSec: 0, totalTalkSec: 0, members: new Map() };
-      this.stats.set(key, stat);
+    const cached = this.stats.get(key);
+    if (cached) return cached;
+
+    // Not seen by this process yet — it may still have history from the pod
+    // that owned this connection before us.
+    let stat: QueueStat | undefined;
+    try {
+      const raw = await this.redis.get(QueueStatsService.key(connectionId, queue));
+      if (raw) stat = this.fromSnapshot(JSON.parse(raw) as QueueStatSnapshot);
+    } catch (e) {
+      this.logger.warn(`qstats hydrate failed for ${key}: ${(e as Error).message}`);
     }
+    stat ??= {
+      connectionId,
+      queue,
+      waiting: 0,
+      answered: 0,
+      abandoned: 0,
+      totalHoldSec: 0,
+      totalTalkSec: 0,
+      members: new Map(),
+    };
+    this.stats.set(key, stat);
     return stat;
+  }
+
+  private persist(stat: QueueStat): void {
+    const snapshot: QueueStatSnapshot = {
+      ...stat,
+      members: Object.fromEntries(stat.members),
+    };
+    this.redis
+      .set(
+        QueueStatsService.key(stat.connectionId, stat.queue),
+        JSON.stringify(snapshot),
+        'EX',
+        this.ttlSec,
+      )
+      .catch((e) => this.logger.warn(`qstats persist failed: ${(e as Error).message}`));
+  }
+
+  private fromSnapshot(s: QueueStatSnapshot): QueueStat {
+    return { ...s, members: new Map(Object.entries(s.members ?? {})) };
+  }
+
+  private async scan(): Promise<QueueStatSnapshot[]> {
+    const keys: string[] = [];
+    let cursor = '0';
+    do {
+      const [next, batch] = await this.redis.scan(cursor, 'MATCH', 'cti:qstats:*', 'COUNT', 200);
+      cursor = next;
+      keys.push(...batch);
+    } while (cursor !== '0');
+    if (!keys.length) return [];
+
+    const raw = await this.redis.mget(keys);
+    return raw
+      .filter((v): v is string => !!v)
+      .map((v) => JSON.parse(v) as QueueStatSnapshot);
   }
 
   private count(raw: string | undefined, fallback: number): number {

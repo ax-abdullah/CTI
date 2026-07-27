@@ -1,12 +1,12 @@
 # Manual Test & Validation Guide
 
-Hands-on scenarios for a human to validate the CTI platform end-to-end against the lab. Each scenario has **Goal → Steps → Expected → ☐ Pass**. The automated suite (`npm test`, 60 cases) covers unit/integration logic; this guide covers the live flows a machine can't fully assert.
+Hands-on scenarios for a human to validate the CTI platform end-to-end against the lab. Each scenario has **Goal → Steps → Expected → ☐ Pass**. The automated suite (`npm test`, 76 cases) covers unit/integration logic; this guide covers the live flows a machine can't fully assert. For orientation before you start, the interactive diagram at [architecture.html](./architecture.html) traces each of these flows through the system.
 
 ## Setup (once)
 
 ```bash
 # infra + lab PBX
-cd ../Multi-Tenant-Asterisk-PBX && docker compose up -d      # Asterisk (AMI :5038)
+cd ../Multi-Tenant-Asterisk && docker compose up -d      # Asterisk (AMI :5038)
 cd ../CTI && docker compose up -d                            # Postgres :5433, Redis :6380
 
 # build, seed (PRINTS the tenant API keys + admin key ONCE — copy them), run
@@ -24,7 +24,24 @@ WEBHOOK_SECRET=receiver-b-secret node scripts/webhook-receiver.mjs 4001 &
 ```
 
 Set shell vars for convenience: `KEY_A`, `KEY_B` (from seed), `ADMIN` (from `.env` `ADMIN_API_KEY`).
-Lab dialplan: `1000`/`2000` are answered echo tests (good for full call lifecycles); tenant-a = `1XXX`, tenant-b = `2XXX`. To end a lab call: `docker exec asterisk-pbx asterisk -rx "channel request hangup all"`.
+Lab dialplan: `1000`/`2000` reach each tenant's queue (answered, recorded); `*43` is a plain echo test; tenant-a = `1XXX`, tenant-b = `2XXX`, `bevatel` = `3XXX` (not in the seed). To end a lab call: `docker exec asterisk-pbx asterisk -rx "channel request hangup all"`.
+
+**Check this first — two scenarios below fail silently without it.** Confirm the manager user's grants:
+
+```bash
+docker exec asterisk-pbx asterisk -rx "manager show user cti"
+# read perm must include `agent`  → G-series wallboard (L2)
+# write perm must include `reporting` → G1 resync (CoreShowChannels)
+```
+
+Asterisk authorises actions against **write** perms and events against **read** perms, so `reporting` belongs on `write` — on `read` it does nothing. Without them, G1 silently loses in-flight calls and L2 returns an empty list, with no error in either case.
+
+No registered SIP phones? Drive calls from AMI instead of `/v1/calls/originate`, which needs a reachable `PJSIP/<ext>`:
+
+```bash
+docker exec asterisk-pbx asterisk -rx \
+  "channel originate Local/1000@tenant-a-internal application Wait 30"
+```
 
 ---
 
@@ -110,7 +127,9 @@ Expected: `401 Invalid API key`. ☐
 ## L. Advanced telephony (Phase 11)
 
 **L1 — Coaching endpoint validates + executes.** `POST /v1/supervisor/monitor {supervisorExt:"1002",agentExt:"1001",mode:"whisper"}` (tenant key). Expected: `{status:"coaching",mode:"whisper",...}` and an `AMI whisper on 1001 by 1002` log line; a non-tenant extension (e.g. `9999`) → 400. *(Audible coaching needs registered SIP phones.)* ☐
-**L2 — Queue wallboard endpoint.** `GET /v1/queues` (tenant key). Expected: `{queues:[…]}` — empty until queues exist on the PBX; with a configured queue, waiting/answered/members populate and `queue.stats` messages arrive on the softphone WS. ☐
+**L2 — Queue wallboard tracks a live call.** Needs `agent` on the manager user's read perms (see Setup) and a queue on the PBX — the lab's `queue-tenant-a` sits on extension `1000`.
+Steps: `GET /v1/queues` (tenant key) for a baseline; place a call into the queue (`channel originate Local/1000@tenant-a-internal application Wait 30`); `GET /v1/queues` again while it waits; hang up and query once more.
+Expected: `waiting` goes to `1` while queued, then on hangup `waiting` returns to `0` and `abandoned` increments — `{"queue":"queue-tenant-a","waiting":1,…}` → `{…,"waiting":0,"abandoned":1}`. `queue.stats` messages mirror this on the softphone WS. `membersTotal` stays `0` until real endpoints register as members. ☐
 **L3 — ARI status.** `GET /health/ari`. Expected: `{connections:[…]}` — one entry per `driver:"ari"` connection (empty by default). ☐
 **L4 — ARI connector (needs a Stasis PBX).** Register a `driver:"ari"` connection, point an inbound context at `Stasis(<app>)`, place a call. Expected: normal `call.ringing/answered/ended` events (ARI-sourced) and an IVR routing log setting `CTI_QUEUE`/`CTI_PRIORITY`. *(Skip without http.conf/ari.conf + Stasis dialplan.)* ☐
 
@@ -131,6 +150,48 @@ Expected: `401 Invalid API key`. ☐
 | K6 | expired recording token (wait >15 min) | 404 | ☐ |
 
 ---
+
+## M. Multi-replica correctness (Phase 12a)
+
+**These are the scenarios that fail on any pre-Phase-12 build** — where two replicas produce two of every CRM record. Design: [SCALING.md](./SCALING.md).
+
+Setup: two app processes sharing one Redis + Postgres, plus the tenant-a webhook receiver.
+
+```bash
+WEBHOOK_SECRET=receiver-a-secret node scripts/webhook-receiver.mjs 4000 &
+POD_ID=pod-A npm start &                 # :3000
+PORT=3002 POD_ID=pod-B npm start &       # :3002 (3001 collides with the lab API)
+```
+
+**M1 — Exactly one replica drives the PBX.** `GET /admin/cluster` on both (admin key).
+Expected: the same `leases` array from both; exactly one lists the connection under `owned`, the other shows `owned: []`. Only the owner's log contains `Connected to 127.0.0.1:5038`. ☐
+
+**M2 — One call produces exactly one of everything.** Place a call (`docker exec asterisk-pbx asterisk -rx "channel originate Local/*43@tenant-a-internal application Wait 6"`), hang up, wait ~8s.
+Expected: the receiver logs **exactly one** `call.ringing`, one `call.answered`, one `call.ended`. Two of each means the build predates Phase 12a, or the replicas are on different Redis instances. ☐
+
+**M3 — Ownership handover on graceful shutdown.** `SIGTERM` the owning replica.
+Expected: within ~5s the peer logs `Supervising lab-asterisk` and `Connected to …:5038`; `GET /admin/cluster` on the survivor now shows it under `owned`. ☐
+
+**M4 — Handover after a hard kill.** `kill -9` the owner instead.
+Expected: the connection is orphaned until the lease TTL expires (≤30s by default), then the peer claims it. Slower than M3 by design — nothing released the lease. ☐
+
+**M5 — In-flight call survives a handover.** Start a long call (`… application Wait 90`), confirm `GET /v1/calls` shows it, then `SIGTERM` the owner. After the peer takes over, hang up.
+Expected: `call.ended` still fires **once**, with the original `callId` and a duration spanning the handover. ☐
+
+**M6 — Registry reload reaches every replica.** `POST /admin/reload` against **one** replica.
+Expected: `{"status":"reload-broadcast"}`, and *both* logs show a fresh `Registry loaded …` line. Before Phase 12a only the receiving pod reloaded, and the others answered 401 for newly created tenants. ☐
+
+**M7 — Presence reads the same everywhere.** Place a call that rings a tenant extension (`… Local/1001@tenant-a-internal …`), then `GET /v1/agents/state` (tenant key) on **both** replicas.
+Expected: byte-identical responses, including from the replica that owns nothing and never saw the AMI events. ☐
+
+**M8 — Wallboard reads the same everywhere.** With a call queued (`… Local/1000@tenant-a-internal …`), `GET /v1/queues` on both.
+Expected: identical, both showing `waiting: 1`. After hangup, both show `abandoned` incremented. ☐
+
+**M9 — Click-to-call from a non-owning replica.** `POST /v1/calls/originate` against the replica whose `owned` is empty.
+Expected: it succeeds — the command is routed over Redis to the replica holding the PBX socket. A failure here means the RPC path is broken, not the PBX. ☐
+
+**M10 — Split-Redis detection (negative).** Point one replica at a different Redis and repeat M2.
+Expected: **two** of every event — demonstrating that the guarantee depends on all replicas sharing one Redis. Restore the config afterwards. ☐
 
 ## User-flow use-cases (narrative)
 

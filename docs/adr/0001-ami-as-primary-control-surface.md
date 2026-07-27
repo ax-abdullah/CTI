@@ -20,5 +20,5 @@ Use **AMI** as the primary surface. ARI is deliberately not used.
 
 - The connector abstraction keeps the door open for an ARI connector later (in-call coaching, CRM-driven IVR) without touching downstream code.
 - We inherit AMI's noise: channel-centric events require a correlation engine (ADR-0003).
-- AMI's coarse auth (user + ACL) makes network placement critical (ADR-0007); manager users are scoped to `read=call,cdr,dialplan,dtmf` / `write=call,originate`, never `write=system`.
+- AMI's coarse auth (user + ACL) makes network placement critical (ADR-0007); manager users are scoped to `read=call,cdr,dialplan,dtmf,agent` / `write=call,originate,reporting`, never `system` on write. Two grants are non-obvious but non-optional: `agent` on **read** gates every `app_queue` event (the wallboard), and `reporting` on **write** gates the `CoreShowChannels` action (the resync in ADR-0003) — Asterisk authorises actions against write perms and events against read perms, so putting `reporting` on read has no effect.
 - Dialplan hooks remain a documented degraded mode for PBXs where AMI is unobtainable (hosted providers).

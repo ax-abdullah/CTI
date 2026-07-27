@@ -106,24 +106,52 @@ export class AmiClient extends EventEmitter {
     if (!socket || socket.destroyed) throw new Error('AMI not connected');
     const actionId = randomUUID();
     const collected: AmiMessage[] = [];
+    const timeoutMs = this.opts.actionTimeoutMs ?? 10_000;
 
     return new Promise<AmiMessage[]>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      let timer: ReturnType<typeof setTimeout>;
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.pending.delete(actionId);
         this.off('event', onEvent);
-        reject(new Error(`AMI action ${action.Action} timed out`));
-      }, this.opts.actionTimeoutMs ?? 10_000);
+      };
+      const fail = (err: Error) => {
+        cleanup();
+        reject(err);
+      };
+      const arm = () =>
+        setTimeout(() => fail(new Error(`AMI action ${action.Action} timed out`)), timeoutMs);
 
       const onEvent = (msg: AmiMessage) => {
         if (msg.ActionID !== actionId) return;
         if (msg.Event === completeEvent) {
-          clearTimeout(timer);
-          this.off('event', onEvent);
+          cleanup();
           resolve(collected);
         } else {
           collected.push(msg);
         }
       };
+      timer = arm();
       this.on('event', onEvent);
+
+      // Asterisk answers the action itself before streaming the event list.
+      // `Success` only acks that a list follows; `Error` is terminal — most
+      // often a manager user lacking the action's read class (CoreShowChannels
+      // needs `reporting`) — so fail with that message instead of waiting out
+      // the timeout for a completion event that will never arrive.
+      // dispatch() consumes this entry and clears its timer, hence the re-arm.
+      this.pending.set(actionId, {
+        resolve: (res: AmiMessage) => {
+          if (res.Response === 'Success') {
+            timer = arm();
+            return;
+          }
+          fail(new Error(`AMI action ${action.Action} failed: ${res.Message ?? res.Response}`));
+        },
+        reject: fail,
+        timer,
+      });
 
       const frame =
         Object.entries({ ...action, ActionID: actionId })

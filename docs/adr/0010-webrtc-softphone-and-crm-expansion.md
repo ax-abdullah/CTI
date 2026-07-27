@@ -14,7 +14,7 @@ Two expansion goals: let an agent take **real audio in the browser** (not just c
 - **Per-agent SIP credentials live in the registry** (`Agent.sipUsername`/`sipPasswordEnc`, migration `AgentSip`), AES-256-GCM encrypted like every other secret. `GET /v1/softphone/webrtc-config` (agent-token auth) returns the registration params — `wssUrl`, `sipUri`, `authUser`, `password`, `iceServers`.
 - **The SIP password is returned to the browser.** WebRTC user-agents perform SIP digest auth client-side, so this is unavoidable and standard; it is scoped to one endpoint and protected by the short-lived agent token over HTTPS.
 - **Dual dialing mode:** with audio enabled, Dial places a SIP call and inbound rings the tab; otherwise it falls back to the desk-phone AMI originate. One page serves both worlds.
-- WebRTC PBX config (wss transport + DTLS-SRTP endpoints) is delivered as reference [webrtc.conf](../../../Multi-Tenant-Asterisk-PBX/config/webrtc.conf), not auto-applied — enabling it is the operator's choice.
+- WebRTC PBX config (wss transport + DTLS-SRTP endpoints) is delivered as reference [webrtc.conf](../../../Multi-Tenant-Asterisk/config/webrtc.conf), not auto-applied — enabling it is the operator's choice.
 
 ### HubSpot & Dynamics adapters
 - Both reuse the **Zoho/Salesforce adapter shape** unchanged — a `CrmType`, a token service (refresh/client-credentials → cached access token, invalidated on 401), a thin REST client, and a dispatcher/processor pair over a dedicated durable BullMQ queue. `call.ended` → a HubSpot **Call engagement** / a Dataverse **phonecall activity**, owned by the mapped user (`Agent.crmRefs.hubspot` / `.dynamics`).

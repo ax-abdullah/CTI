@@ -33,7 +33,13 @@ function fakeRedis() {
   const store = new Map<string, string>();
   return {
     store,
-    set: async (k: string, v: string) => void store.set(k, v),
+    // Models SET ... NX, which is what the exactly-once finalize claim relies
+    // on: the first caller gets 'OK', everyone after it gets null.
+    set: async (k: string, v: string, ...args: unknown[]) => {
+      if (args.includes('NX') && store.has(k)) return null;
+      store.set(k, v);
+      return 'OK';
+    },
     del: async (k: string) => void store.delete(k),
     scan: async (_cursor: string, _m: string, pattern: string) => {
       const rx = new RegExp('^' + pattern.replace('*', '.*') + '$');
@@ -58,14 +64,14 @@ function newService(registry: TenantRegistryService) {
 describe('CallStateService correlation', () => {
   jest.useFakeTimers();
 
-  it('emits ringing -> answered -> ended for an inbound call', () => {
+  it('emits ringing -> answered -> ended for an inbound call', async () => {
     const { events, feed } = newService(fakeRegistry(tenantA()));
 
     feed({ Event: 'Newchannel', Uniqueid: 'c1', Linkedid: 'c1', Channel: 'PJSIP/1001-00000001', Context: 'tenant-a-internal', CallerIDNum: '0567778888' });
     feed({ Event: 'DialBegin', Linkedid: 'c1', DestChannel: 'PJSIP/1001-00000001', DialString: '1001' });
     feed({ Event: 'BridgeEnter', Linkedid: 'c1', Uniqueid: 'c1' });
     feed({ Event: 'Hangup', Linkedid: 'c1', Uniqueid: 'c1' });
-    jest.advanceTimersByTime(2000); // pass the finalize grace period
+    await jest.advanceTimersByTimeAsync(2000); // pass the finalize grace period
 
     const types = events.map((e) => e.type);
     expect(types).toEqual([CALL_EVENTS.ringing, CALL_EVENTS.answered, CALL_EVENTS.ended]);
@@ -75,57 +81,57 @@ describe('CallStateService correlation', () => {
     expect(ended.billsecSec).toBeGreaterThanOrEqual(0);
   });
 
-  it('tags a call.ended with the callRef and outbound direction from CTI_CALL_REF', () => {
+  it('tags a call.ended with the callRef and outbound direction from CTI_CALL_REF', async () => {
     const { events, feed } = newService(fakeRegistry(tenantA()));
 
     feed({ Event: 'Newchannel', Uniqueid: 'c2', Linkedid: 'c2', Channel: 'Local/1001@tenant-a-internal-00000002;1', Context: 'tenant-a-internal' });
     feed({ Event: 'VarSet', Linkedid: 'c2', Uniqueid: 'c2', Variable: 'CTI_CALL_REF', Value: 'ref-xyz' });
     feed({ Event: 'Newstate', Linkedid: 'c2', Uniqueid: 'c2', ChannelStateDesc: 'Up' });
     feed({ Event: 'Hangup', Linkedid: 'c2', Uniqueid: 'c2' });
-    jest.advanceTimersByTime(2000);
+    await jest.advanceTimersByTimeAsync(2000);
 
     const ended = events.find((e) => e.type === CALL_EVENTS.ended)!.payload;
     expect(ended.callRef).toBe('ref-xyz');
     expect(ended.direction).toBe('outbound');
   });
 
-  it('reports NO ANSWER when a dialed call is never answered', () => {
+  it('reports NO ANSWER when a dialed call is never answered', async () => {
     const { events, feed } = newService(fakeRegistry(tenantA()));
 
     feed({ Event: 'Newchannel', Uniqueid: 'c3', Linkedid: 'c3', Channel: 'PJSIP/1002-00000003', Context: 'tenant-a-internal', CallerIDNum: '0560000000' });
     feed({ Event: 'DialEnd', Linkedid: 'c3', DialStatus: 'NOANSWER' });
     feed({ Event: 'Hangup', Linkedid: 'c3', Uniqueid: 'c3' });
-    jest.advanceTimersByTime(2000);
+    await jest.advanceTimersByTimeAsync(2000);
 
     const ended = events.find((e) => e.type === CALL_EVENTS.ended)!.payload;
     expect(ended.disposition).toBe('NO ANSWER');
     expect(events.some((e) => e.type === CALL_EVENTS.answered)).toBe(false);
   });
 
-  it('drops a call that matches no tenant (never delivered cross-tenant)', () => {
+  it('drops a call that matches no tenant (never delivered cross-tenant)', async () => {
     // Registry that owns only 2xxx / tenant-b context; a 1xxx call must not leak.
     const other: ResolvedTenant = { entity: { slug: 'tenant-b', contexts: ['tenant-b-internal'] } as any, extensionRegex: /^2\d{3}$/ };
     const { events, feed } = newService(fakeRegistry(other));
 
     feed({ Event: 'Newchannel', Uniqueid: 'c4', Linkedid: 'c4', Channel: 'PJSIP/1001-00000004', Context: 'tenant-a-internal' });
     feed({ Event: 'Hangup', Linkedid: 'c4', Uniqueid: 'c4' });
-    jest.advanceTimersByTime(2000);
+    await jest.advanceTimersByTimeAsync(2000);
 
     expect(events).toHaveLength(0);
   });
 
-  it('emits nothing until all legs of a multi-leg call have hung up', () => {
+  it('emits nothing until all legs of a multi-leg call have hung up', async () => {
     const { events, feed } = newService(fakeRegistry(tenantA()));
 
     feed({ Event: 'Newchannel', Uniqueid: 'a', Linkedid: 'a', Channel: 'PJSIP/1001-0000000a', Context: 'tenant-a-internal', CallerIDNum: '0567778888' });
     feed({ Event: 'Newchannel', Uniqueid: 'b', Linkedid: 'a', Channel: 'PJSIP/1002-0000000b', Context: 'tenant-a-internal' });
     feed({ Event: 'BridgeEnter', Linkedid: 'a', Uniqueid: 'a' });
     feed({ Event: 'Hangup', Linkedid: 'a', Uniqueid: 'a' }); // only one leg down
-    jest.advanceTimersByTime(2000);
+    await jest.advanceTimersByTimeAsync(2000);
     expect(events.some((e) => e.type === CALL_EVENTS.ended)).toBe(false);
 
     feed({ Event: 'Hangup', Linkedid: 'a', Uniqueid: 'b' }); // second leg down
-    jest.advanceTimersByTime(2000);
+    await jest.advanceTimersByTimeAsync(2000);
     expect(events.some((e) => e.type === CALL_EVENTS.ended)).toBe(true);
   });
 

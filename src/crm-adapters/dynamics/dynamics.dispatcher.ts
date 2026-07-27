@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { Queue } from 'bullmq';
 import { CALL_EVENTS, CallEndedEvent } from '../../call-state/normalized-events';
+import { isFromCluster } from '../../cluster/cluster-bus.service';
 import { TenantRegistryService } from '../../tenants/tenant-registry.service';
 import { DYNAMICS_QUEUE, DynamicsJob } from './dynamics.types';
 
@@ -15,6 +16,8 @@ export class DynamicsDispatcher {
 
   @OnEvent(CALL_EVENTS.ended)
   onEnded(event: CallEndedEvent): Promise<unknown> | void {
+    // Fan-out copy from another pod: that pod already enqueued it (ADR-0012).
+    if (isFromCluster(event)) return;
     if (!this.registry.integrationFor(event.tenantId, 'dynamics')) return;
     return this.queue.add('log-call', { tenantSlug: event.tenantId, event }, {
       attempts: 4,

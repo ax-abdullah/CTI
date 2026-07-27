@@ -15,3 +15,5 @@ Decisions that shaped the CTI platform, in the order they were made. Format: Con
 | [0009](0009-tls-terminating-reverse-proxy-deployment.md) | TLS-terminating reverse proxy + containerized deployment | Accepted |
 | [0010](0010-webrtc-softphone-and-crm-expansion.md) | WebRTC softphone (self-hosted JsSIP) + HubSpot/Dynamics adapters | Accepted |
 | [0011](0011-ari-advanced-telephony.md) | ARI connector + advanced telephony (coaching, queues, CRM-driven IVR) | Accepted |
+| [0012](0012-single-writer-ownership-for-horizontal-scale.md) | Single-writer PBX ownership via Redis leases, so replicas can scale without duplicating CRM writes | Accepted |
+| [0013](0013-cluster-event-bus-and-exactly-once-enqueue.md) | Redis pub/sub event bus across replicas, and the rule that only the deriving pod enqueues delivery | Accepted |

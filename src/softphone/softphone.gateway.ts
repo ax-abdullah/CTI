@@ -26,14 +26,15 @@ interface AgentSocket {
  * any other client). Connect with ws://host/softphone-ws?token=<agent JWT>;
  * each socket receives only its own agent's calls.
  *
- * answered/ended events carry no agentExt, so the gateway remembers which
- * (tenant, ext) a callId was ring-routed to and follows up on that key.
+ * Every call event carries its own agentExt, so this gateway holds no
+ * per-call state — only the live sockets. Any replica can therefore serve
+ * any agent, which is what lets the API tier scale independently of the pod
+ * that owns the PBX (ADR-0012).
  */
 @WebSocketGateway({ path: '/softphone-ws' })
 export class SoftphoneGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(SoftphoneGateway.name);
   private readonly clients = new Map<WebSocket, AgentSocket>();
-  private readonly callRoutes = new Map<string, { tenantSlug: string; ext: string }>();
 
   constructor(
     private readonly config: ConfigService,
@@ -59,24 +60,24 @@ export class SoftphoneGateway implements OnGatewayConnection, OnGatewayDisconnec
     this.clients.delete(socket);
   }
 
+  // Each event carries its own agentExt, so no per-call routing state is kept
+  // here. That matters across replicas: the pod holding an agent's socket is
+  // usually not the pod that owns the PBX, and it receives these events over
+  // the cluster bus — often without ever having seen the matching ringing.
   @OnEvent(CALL_EVENTS.ringing)
   onRinging(event: CallRingingEvent): void {
     if (!event.agentExt) return;
-    this.callRoutes.set(event.callId, { tenantSlug: event.tenantId, ext: event.agentExt });
     this.push(event.tenantId, event.agentExt, { type: 'call.ringing', ...event });
   }
 
   @OnEvent(CALL_EVENTS.answered)
   onAnswered(event: CallAnsweredEvent): void {
-    const route = this.callRoutes.get(event.callId);
-    if (route) this.push(route.tenantSlug, route.ext, { type: 'call.answered', ...event });
+    if (event.agentExt) this.push(event.tenantId, event.agentExt, { type: 'call.answered', ...event });
   }
 
   @OnEvent(CALL_EVENTS.ended)
   onEnded(event: CallEndedEvent): void {
-    const route = this.callRoutes.get(event.callId);
-    this.callRoutes.delete(event.callId);
-    if (route) this.push(route.tenantSlug, route.ext, { type: 'call.ended', ...event });
+    if (event.agentExt) this.push(event.tenantId, event.agentExt, { type: 'call.ended', ...event });
   }
 
   /** Presence is a team signal: broadcast to every socket of the tenant. */

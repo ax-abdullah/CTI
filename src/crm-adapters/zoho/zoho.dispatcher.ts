@@ -8,6 +8,7 @@ import {
   CallEndedEvent,
   CallRingingEvent,
 } from '../../call-state/normalized-events';
+import { isFromCluster } from '../../cluster/cluster-bus.service';
 import { TenantRegistryService } from '../../tenants/tenant-registry.service';
 import { ZOHO_QUEUE, ZohoJob } from './zoho.types';
 
@@ -41,6 +42,8 @@ export class ZohoDispatcher {
   }
 
   private enqueue(job: ZohoJob): Promise<unknown> | void {
+    // Fan-out copy from another pod: that pod already enqueued it (ADR-0012).
+    if (isFromCluster(job.event)) return;
     if (!this.registry.integrationFor(job.tenantSlug, 'zoho')) return;
     return this.queue.add(job.kind, job, {
       attempts: 4,

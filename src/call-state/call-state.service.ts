@@ -207,6 +207,7 @@ export class CallStateService implements BeforeApplicationShutdown {
     this.bus.emit(CALL_EVENTS.answered, {
       callId: call.callId,
       tenantId: call.tenant.entity.slug,
+      agentExt: call.agentExt,
       answeredAt: call.answeredAt.toISOString(),
     });
   }
@@ -220,15 +221,29 @@ export class CallStateService implements BeforeApplicationShutdown {
 
     if (![...call.channels.values()].every((c) => c.hungUp)) return;
     if (call.finalizeTimer) clearTimeout(call.finalizeTimer);
-    call.finalizeTimer = setTimeout(() => this.finalize(call), this.finalizeGraceMs);
+    call.finalizeTimer = setTimeout(() => void this.finalize(call), this.finalizeGraceMs);
   }
 
-  private finalize(call: CallRecord): void {
+  private async finalize(call: CallRecord): Promise<void> {
     if (call.endedEmitted) return;
     if (![...call.channels.values()].every((c) => c.hungUp)) return;
 
     call.endedEmitted = true;
     this.calls.delete(call.key);
+
+    // `call.ended` is the CRM's record of the call, so it must fire exactly
+    // once cluster-wide. Single ownership almost guarantees that, but a lease
+    // handover can briefly leave two pods holding the same call — the old
+    // owner mid-hangup and the new one having hydrated it from Redis.
+    //
+    // The claim is a separate SET NX key rather than "did our DEL remove the
+    // snapshot": persistence is fire-and-forget, so a snapshot that has not
+    // landed yet would make DEL report 0 and silently swallow a real call log.
+    // Losing a record is far worse than duplicating one.
+    if (!(await this.claimFinalize(call))) {
+      this.logger.debug(`Call ${call.callId} finalized by another pod; skipping`);
+      return;
+    }
     this.forget(call);
 
     if (!call.tenant) {
@@ -379,6 +394,29 @@ export class CallStateService implements BeforeApplicationShutdown {
       .catch((e) => this.logger.warn(`forget ${call.key} failed: ${(e as Error).message}`));
   }
 
+  /**
+   * Wins for exactly one pod. Kept briefly rather than forever: it only has
+   * to outlive the handover window, and a call id is never reused.
+   *
+   * A Redis outage resolves in favour of emitting — a duplicated CRM record
+   * is recoverable by hand, a missing one is invisible.
+   */
+  private async claimFinalize(call: CallRecord): Promise<boolean> {
+    try {
+      const res = await this.redis.set(
+        `cti:finalized:${call.connectionId}:${call.callId}`,
+        '1',
+        'EX',
+        300,
+        'NX',
+      );
+      return res === 'OK';
+    } catch (e) {
+      this.logger.warn(`finalize claim failed for ${call.key}: ${(e as Error).message}`);
+      return true;
+    }
+  }
+
   private toSnapshot(call: CallRecord): CallSnapshot {
     return {
       callId: call.callId,
@@ -471,7 +509,7 @@ export class CallStateService implements BeforeApplicationShutdown {
     if (!call) return;
     for (const ch of call.channels.values()) ch.hungUp = true;
     if (call.finalizeTimer) clearTimeout(call.finalizeTimer);
-    this.finalize(call);
+    void this.finalize(call);
   }
 
   /** Mark a kept call's departed legs hung up; finalize if all are gone. */

@@ -49,8 +49,8 @@ export class TelephonyController {
   @ApiOperation({ summary: 'Live queue/ACD wallboard for the tenant (Phase 11)' })
   @UseGuards(TenantApiKeyGuard)
   @Get('v1/queues')
-  queueStats(@Req() req: { tenant: ResolvedTenant }) {
-    return { queues: this.queues.snapshot([req.tenant.entity.pbxConnectionId]) };
+  async queueStats(@Req() req: { tenant: ResolvedTenant }) {
+    return { queues: await this.queues.snapshot([req.tenant.entity.pbxConnectionId]) };
   }
 
   @ApiTags('Health')

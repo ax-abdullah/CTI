@@ -1,0 +1,1134 @@
+<title>CTI Platform — Signal Path</title>
+
+<style>
+:root{
+  --bg:#EDEFEA;
+  --bg-raised:#F7F8F5;
+  --bg-sunk:#E3E7E0;
+  --rule:#C5CDC6;
+  --rule-soft:#D8DED8;
+  --text:#0D1614;
+  --dim:#5C6B66;
+  --accent:#0E8A70;
+  --accent-text:#0A6B57;
+  --accent-tint:rgba(14,138,112,.10);
+  --lamp:#B07E0F;
+  --oxide:#A24F2C;
+  --wire:rgba(13,22,20,.30);
+  --shadow:rgba(13,22,20,.07);
+
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,"JetBrains Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
+
+  --lane-pad:58px;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#0C1211;
+    --bg-raised:#141C1A;
+    --bg-sunk:#080D0C;
+    --rule:#27332F;
+    --rule-soft:#1C2523;
+    --text:#DDE4DF;
+    --dim:#879189;
+    --accent:#3CC0A0;
+    --accent-text:#3CC0A0;
+    --accent-tint:rgba(60,192,160,.12);
+    --lamp:#DCA43C;
+    --oxide:#D97A50;
+    --wire:rgba(221,228,223,.26);
+    --shadow:rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="light"]{
+  --bg:#EDEFEA; --bg-raised:#F7F8F5; --bg-sunk:#E3E7E0;
+  --rule:#C5CDC6; --rule-soft:#D8DED8;
+  --text:#0D1614; --dim:#5C6B66;
+  --accent:#0E8A70; --accent-text:#0A6B57; --accent-tint:rgba(14,138,112,.10);
+  --lamp:#B07E0F; --oxide:#A24F2C;
+  --wire:rgba(13,22,20,.30); --shadow:rgba(13,22,20,.07);
+}
+:root[data-theme="dark"]{
+  --bg:#0C1211; --bg-raised:#141C1A; --bg-sunk:#080D0C;
+  --rule:#27332F; --rule-soft:#1C2523;
+  --text:#DDE4DF; --dim:#879189;
+  --accent:#3CC0A0; --accent-text:#3CC0A0; --accent-tint:rgba(60,192,160,.12);
+  --lamp:#DCA43C; --oxide:#D97A50;
+  --wire:rgba(221,228,223,.26); --shadow:rgba(0,0,0,.35);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--mono);
+  font-size:15px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+.sheet{max-width:1460px;margin:0 auto;padding:0 20px 80px}
+
+/* ── masthead ─────────────────────────────────────────── */
+.masthead{
+  padding:44px 0 20px;
+  border-bottom:1px solid var(--rule);
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:24px;
+  align-items:end;
+}
+.masthead__eyebrow{
+  font-size:11px;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--dim);margin:0 0 14px;
+}
+h1{
+  font-family:var(--mono);
+  font-size:clamp(30px,4.6vw,52px);
+  font-weight:600;
+  letter-spacing:-.035em;
+  line-height:1.02;
+  margin:0;
+  text-wrap:balance;
+}
+h1 .dim{color:var(--dim);font-weight:400}
+.masthead__lede{
+  font-family:var(--serif);
+  font-size:17px;line-height:1.55;
+  color:var(--dim);
+  max-width:62ch;
+  margin:16px 0 0;
+}
+.stamp{
+  border:1px solid var(--rule);
+  background:var(--bg-raised);
+  padding:11px 14px;
+  font-size:11px;
+  letter-spacing:.06em;
+  color:var(--dim);
+  display:grid;
+  gap:4px;
+  white-space:nowrap;
+}
+.stamp b{color:var(--text);font-weight:600}
+
+/* ── control deck ─────────────────────────────────────── */
+.deck{
+  border-bottom:1px solid var(--rule);
+  padding:20px 0 22px;
+  display:grid;
+  gap:18px;
+}
+.deckrow{display:grid;grid-template-columns:112px minmax(0,1fr);gap:18px;align-items:start}
+/* A bare `display:grid` on the class outranks the UA's [hidden] rule, so the
+   phase row stayed visible in the cluster view. Restate it at higher specificity. */
+.deckrow[hidden]{display:none}
+.deckrow__label{
+  font-size:10px;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--dim);padding-top:7px;
+}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{
+  font-family:var(--mono);font-size:12px;letter-spacing:.02em;
+  border:1px solid var(--rule);
+  background:var(--bg-raised);
+  color:var(--text);
+  padding:6px 11px;
+  cursor:pointer;
+  border-radius:1px;
+  transition:border-color .14s,background .14s,color .14s;
+}
+.chip:hover{border-color:var(--accent)}
+.chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* Pressed reads as a punched key: ink ground, page-colour legend.
+   Monochrome on purpose — the accent means "signal" and stays on the board. */
+.chip[aria-pressed="true"]{background:var(--text);border-color:var(--text);color:var(--bg)}
+.chip[aria-pressed="true"]:hover{border-color:var(--text)}
+.chip--num{min-width:34px;text-align:center;padding:6px 8px}
+
+/* ── stage ────────────────────────────────────────────── */
+.stage{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 356px;
+  gap:34px;
+  align-items:start;
+  padding-top:30px;
+}
+
+/* ── board + wires ────────────────────────────────────── */
+.board{position:relative;padding:0 var(--lane-pad)}
+#wires{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;overflow:visible}
+.edge{
+  fill:none;stroke:var(--wire);stroke-width:1;
+  marker-end:url(#arrow);
+  transition:stroke .2s,opacity .2s;
+}
+.edge--muted{opacity:.35}
+.edge--live{
+  stroke:var(--accent);stroke-width:1.75;
+  marker-end:url(#arrow-live);
+  stroke-dasharray:5 7;
+  animation:travel .62s linear infinite;
+}
+@keyframes travel{to{stroke-dashoffset:-24}}
+@media (prefers-reduced-motion:reduce){
+  .edge--live{animation:none;stroke-dasharray:none}
+}
+
+.band{position:relative;z-index:1;display:grid;grid-template-columns:98px minmax(0,1fr);gap:20px;padding:22px 0}
+.band + .band{border-top:1px dashed var(--rule-soft)}
+.zone{padding-top:2px}
+.zone__ref{
+  font-size:26px;font-weight:600;letter-spacing:-.04em;line-height:1;
+  color:var(--dim);
+}
+.zone__name{
+  font-size:10px;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--dim);margin-top:7px;
+}
+.zone__note{font-family:var(--serif);font-size:12.5px;font-style:italic;color:var(--dim);margin-top:4px;line-height:1.35}
+.nodes{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:14px}
+.nodes--solo{grid-template-columns:minmax(0,1fr)}
+
+.node{
+  position:relative;
+  font-family:var(--mono);
+  text-align:left;
+  background:var(--bg-raised);
+  border:1px solid var(--rule);
+  border-radius:1px;
+  padding:11px 12px 12px;
+  cursor:pointer;
+  color:var(--text);
+  display:flex;flex-direction:column;gap:5px;
+  min-height:84px;
+  box-shadow:0 1px 0 var(--shadow);
+  transition:border-color .14s,background .14s,transform .14s,opacity .2s;
+}
+.node:hover{border-color:var(--accent);transform:translateY(-1px)}
+.node:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.node__ref{
+  font-size:9.5px;letter-spacing:.16em;color:var(--dim);
+}
+.node__name{font-size:13.5px;font-weight:600;letter-spacing:-.015em;line-height:1.25}
+.node__meta{font-size:10.5px;color:var(--dim);letter-spacing:.01em;line-height:1.35;margin-top:auto}
+.node__lamp{
+  position:absolute;top:10px;right:11px;
+  width:7px;height:7px;background:var(--rule);border-radius:50%;
+  transition:background .16s,box-shadow .16s;
+}
+.node.is-active{border-color:var(--accent);background:var(--accent-tint)}
+.node.is-active .node__lamp{background:var(--accent);box-shadow:0 0 0 3px var(--accent-tint)}
+.node.is-inflow{border-color:var(--accent)}
+.node.is-marked{border-color:var(--lamp)}
+.node.is-marked .node__lamp{background:var(--lamp)}
+.node.is-dim{opacity:.3}
+.node.is-open{border-color:var(--text)}
+
+/* ── inspector ────────────────────────────────────────── */
+.inspector{
+  position:sticky;top:18px;
+  border:1px solid var(--rule);
+  background:var(--bg-raised);
+  border-radius:1px;
+  max-height:calc(100vh - 36px);
+  overflow-y:auto;
+  box-shadow:0 1px 0 var(--shadow);
+}
+.insp__bar{
+  display:flex;justify-content:space-between;align-items:center;gap:10px;
+  padding:11px 16px;border-bottom:1px solid var(--rule);
+  background:var(--bg-sunk);
+  font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);
+  position:sticky;top:0;z-index:2;
+}
+.insp__body{padding:18px 16px 22px;display:grid;gap:16px}
+.insp__ref{font-size:10px;letter-spacing:.18em;color:var(--dim)}
+.insp__title{font-size:20px;font-weight:600;letter-spacing:-.03em;line-height:1.15;margin:5px 0 0;text-wrap:balance}
+.insp__blurb{font-family:var(--serif);font-size:15px;line-height:1.6;color:var(--text);margin:0}
+.insp__blurb + .insp__blurb{margin-top:-4px}
+.subhead{
+  font-size:9.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);
+  border-top:1px solid var(--rule-soft);padding-top:11px;margin-bottom:8px;
+}
+.kv{display:grid;gap:5px;font-size:11.5px;line-height:1.5}
+.kv div{color:var(--dim);word-break:break-word}
+.kv b{color:var(--text);font-weight:600}
+.pathlist{display:grid;gap:4px;font-size:11.5px;color:var(--dim);word-break:break-all}
+.pathlist span{display:block}
+.tagrow{display:flex;flex-wrap:wrap;gap:5px}
+.tag{
+  font-size:10px;letter-spacing:.08em;
+  border:1px solid var(--rule);padding:3px 7px;color:var(--dim);border-radius:1px;
+}
+.tag--accent{border-color:var(--accent);color:var(--accent-text)}
+
+/* ── flow player ──────────────────────────────────────── */
+.player{border-top:1px solid var(--rule);background:var(--bg-sunk)}
+.player__head{padding:14px 16px 10px}
+.player__name{font-size:13px;font-weight:600;letter-spacing:-.01em}
+.player__count{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);margin-top:4px}
+.steps{list-style:none;margin:0;padding:0 16px 14px;display:grid;gap:2px}
+.step{
+  display:grid;grid-template-columns:22px minmax(0,1fr);gap:9px;
+  padding:8px 0;border-top:1px solid var(--rule-soft);
+  font-family:var(--serif);font-size:13.5px;line-height:1.5;color:var(--dim);
+  cursor:pointer;transition:color .15s;
+}
+.step:first-child{border-top:0}
+.step:hover{color:var(--text)}
+.step__n{font-family:var(--mono);font-size:10px;letter-spacing:.1em;padding-top:4px;color:var(--dim)}
+.step.is-on{color:var(--text)}
+.step.is-on .step__n{color:var(--accent-text)}
+.transport{display:flex;gap:6px;padding:0 16px 16px}
+.tbtn{
+  flex:1;font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  border:1px solid var(--rule);background:var(--bg-raised);color:var(--text);
+  padding:8px 6px;cursor:pointer;border-radius:1px;transition:border-color .14s,color .14s;
+}
+.tbtn:hover{border-color:var(--accent);color:var(--accent-text)}
+.tbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tbtn[disabled]{opacity:.4;cursor:default}
+
+/* ── legend ───────────────────────────────────────────── */
+.legend{display:grid;gap:9px;font-size:11.5px;color:var(--dim);line-height:1.5}
+.legend div{display:grid;grid-template-columns:14px minmax(0,1fr);gap:9px;align-items:start}
+.dot{width:8px;height:8px;border-radius:50%;margin-top:5px}
+.dot--a{background:var(--accent)}
+.dot--l{background:var(--lamp)}
+.dot--o{background:var(--oxide)}
+.dot--n{background:var(--rule)}
+
+.foot{
+  margin-top:46px;padding-top:18px;border-top:1px solid var(--rule);
+  font-size:11px;letter-spacing:.05em;color:var(--dim);
+  display:flex;flex-wrap:wrap;gap:8px 22px;
+}
+
+@media (max-width:1080px){
+  .stage{grid-template-columns:minmax(0,1fr);gap:26px}
+  .inspector{position:static;max-height:none}
+  :root{--lane-pad:26px}
+  .band{grid-template-columns:minmax(0,1fr);gap:12px}
+  .zone{display:flex;align-items:baseline;gap:10px}
+  .zone__name,.zone__note{margin-top:0}
+  .zone__note{display:none}
+  .masthead{grid-template-columns:minmax(0,1fr)}
+  .deckrow{grid-template-columns:minmax(0,1fr);gap:8px}
+}
+@media (max-width:560px){
+  .nodes{grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:10px}
+  .node{min-height:76px;padding:9px 10px 10px}
+}
+</style>
+
+<div class="sheet">
+
+  <header class="masthead">
+    <div>
+      <p class="masthead__eyebrow">Drawing 01 &nbsp;·&nbsp; Multi-tenant CTI platform</p>
+      <h1>Signal&nbsp;path<span class="dim">: PBX&nbsp;→&nbsp;CRM</span></h1>
+      <p class="masthead__lede">
+        Every component between a ringing phone and a written CRM record. Pick a
+        node to read what it does, or run a flow to watch a call travel the wire.
+        Switch to the <b>cluster</b> view for what changes once more than one
+        replica is running.
+      </p>
+    </div>
+    <div class="stamp">
+      <div><b>2</b> views &nbsp;·&nbsp; <b>44</b> components &nbsp;·&nbsp; <b>11</b> flows</div>
+      <div><b>12</b> phases &nbsp;·&nbsp; <b>92</b> tests green</div>
+      <div>Phase <b>12a</b> &nbsp;·&nbsp; horizontally scalable</div>
+    </div>
+  </header>
+
+  <section class="deck">
+    <div class="deckrow">
+      <div class="deckrow__label">View</div>
+      <div class="chips" id="viewChips">
+        <button class="chip" type="button" data-view="signal" aria-pressed="true">Signal path — one call, end to end</button>
+        <button class="chip" type="button" data-view="cluster" aria-pressed="false">Cluster — running many replicas</button>
+      </div>
+    </div>
+    <div class="deckrow">
+      <div class="deckrow__label">Trace a flow</div>
+      <div class="chips" id="flowChips"></div>
+    </div>
+    <div class="deckrow" id="phaseRow">
+      <div class="deckrow__label">Built in phase</div>
+      <div class="chips" id="phaseChips"></div>
+    </div>
+  </section>
+
+  <div class="stage">
+    <div class="board" id="board">
+      <svg id="wires" aria-hidden="true">
+        <defs>
+          <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,1 L7,4 L0,7 z" fill="var(--wire)"></path>
+          </marker>
+          <marker id="arrow-live" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,1 L7,4 L0,7 z" fill="var(--accent)"></path>
+          </marker>
+        </defs>
+        <g id="wireGroup"></g>
+      </svg>
+      <div id="bands"></div>
+    </div>
+
+    <aside class="inspector">
+      <div class="insp__bar">
+        <span id="inspMode">Legend</span>
+        <button class="tbtn" id="clearBtn" style="flex:0;padding:4px 9px">Reset</button>
+      </div>
+      <div class="insp__body" id="inspBody" aria-live="polite"></div>
+      <div class="player" id="player" hidden>
+        <div class="player__head">
+          <div class="player__name" id="flowName"></div>
+          <div class="player__count" id="flowCount"></div>
+        </div>
+        <ol class="steps" id="stepList"></ol>
+        <div class="transport">
+          <button class="tbtn" id="prevBtn">Prev</button>
+          <button class="tbtn" id="playBtn">Play</button>
+          <button class="tbtn" id="nextBtn">Next</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="foot">
+    <span>Arrows show the direction events travel.</span>
+    <span>Command paths — originate, ChanSpy, snoop — ride the same links in reverse.</span>
+    <span>← / → steps a flow &nbsp;·&nbsp; Esc resets</span>
+  </footer>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+/* ─────────────────────────────────────────────────────────
+   Zones. Order is the signal path: premises at the top,
+   the surfaces people actually touch at the bottom.
+   ───────────────────────────────────────────────────────── */
+const BANDS = [
+  { ref:"A", name:"Premises", note:"customer site", ids:["pstn","pbx","phones"] },
+  { ref:"B", name:"Transport", note:"how the platform reaches the PBX", ids:["direct","agent","tunnelws","filesws"] },
+  { ref:"C", name:"Connector", note:"src/pbx-connector", ids:["amiclient","supervisor","resync","ari","routing"] },
+  { ref:"D", name:"Core", note:"correlation, tenancy, state", ids:["callstate","bus","registry","redis","pg"] },
+  { ref:"E", name:"Delivery", note:"the durable spine", ids:["queues"] },
+  { ref:"F", name:"Integrations", note:"src/crm-adapters", ids:["webhooks","zoho","salesforce","hubspot","dynamics"] },
+  { ref:"G", name:"Surfaces", note:"what people and CRMs call", ids:["rest","softphone","telephonyapi","recordings","admin","obs"] }
+];
+
+const PHASES = [
+  "Lab & AMI enablement","Core connector & signed webhooks","Multi-tenancy & durable delivery",
+  "Zoho PhoneBridge","Salesforce Open CTI","Productization","Tests, migrations, CI",
+  "Reliability & restart survival","Observability","Deployment & recordings tunnel",
+  "WebRTC softphone & CRM expansion","ARI & advanced telephony",
+  "Horizontal scale — safe at N replicas"
+];
+
+const N = {
+  pstn:{ name:"PSTN / SIP trunk", meta:"carrier side", phases:[0],
+    blurb:["Where outside calls come from and go to. The platform never touches the trunk directly — it only ever observes what Asterisk reports about it."],
+    io:["Inbound DID → dialplan context","Outbound via trunk peer"] },
+
+  pbx:{ name:"Asterisk / FreePBX", meta:"AMI 5038 · ARI 8088 · MixMonitor", phases:[0,11],
+    blurb:["The system of record for what is actually happening on the phones. Everything the platform knows about a call is derived from here.","Three surfaces are used: AMI for the event firehose and Originate, ARI for media control and Stasis routing, and MixMonitor for recordings on disk."],
+    io:["AMI · read=call,cdr,dialplan,dtmf,agent","AMI · write=call,originate,reporting","ARI · http.conf + ari.conf, Stasis app","MixMonitor → recordings directory"] },
+
+  phones:{ name:"Extensions & queues", meta:"SIP endpoints · app_queue", phases:[0,10,11],
+    blurb:["Agent endpoints — desk phones, softphones, or the browser WebRTC client — plus the ACD queues they belong to.","Queue events are what the wallboard is built from."],
+    io:["PJSIP endpoints per agent","app_queue: join, leave, abandon, agent connect"] },
+
+  direct:{ name:"Direct AMI link", meta:"mode: direct", phases:[1],
+    blurb:["The platform opens the TCP connection to the PBX itself. Simplest path, and the right one when there is a VPN or an ACL that can reach port 5038."],
+    io:["outbound TCP → host:5038","PbxConnection.mode = 'direct'"] },
+
+  agent:{ name:"On-prem connector", meta:"scripts/connector-agent.mjs", phases:[5,9],
+    blurb:["A small Node agent that runs at the customer site and dials OUT to the platform. No inbound firewall holes, no port forwards, no static IP.","It opens two sockets: one carries the raw AMI stream, the other serves recording files on demand."],
+    io:["wss → /connector-ws","wss → /connector-files","AGENT_RECORDINGS_DIR"] },
+
+  tunnelws:{ name:"AMI tunnel gateway", meta:"/connector-ws", phases:[5],
+    blurb:["Accepts the agent's outbound socket, authenticates it against a hashed connector token, and hands the platform a Duplex stream that behaves exactly like a TCP socket.","The AMI login itself still runs cloud-side — PBX credentials never sit on the customer's machine."],
+    io:["token → sha256 → PbxConnection.connectorTokenHash","heartbeat reaps dead tunnels"] },
+
+  filesws:{ name:"File tunnel gateway", meta:"/connector-files", phases:[9],
+    blurb:["Pulls a recording out of the customer's premises on demand, over the same outbound path. Nothing is bulk-copied into the cloud."],
+    io:["request by basename, traversal-proof","streamed back to the recording proxy"] },
+
+  amiclient:{ name:"AMI client", meta:"AmiClient · SupervisedConnection", phases:[0,1,5],
+    blurb:["A hand-rolled AMI protocol client — the published npm packages are unmaintained. It parses the frame format, tracks ActionID correlation, and reconnects with backoff.","Because it runs over any Duplex, the same client drives both the direct socket and the reverse tunnel without knowing the difference."],
+    io:["emits ami.event, pbx.connected, originate.result","sendAction() · sendEventAction() for list actions"] },
+
+  supervisor:{ name:"PBX supervisor", meta:"PbxSupervisorService", phases:[1,7,11],
+    blurb:["Owns the set of live PBX connections and is the one place that sends commands down them."],
+    io:["originate()","showChannels() → CoreShowChannels","sendAction() — used for ChanSpy coaching"] },
+
+  resync:{ name:"Resync", meta:"ResyncService", phases:[7],
+    blurb:["Runs on every pbx.connected. Asks Asterisk what is genuinely live right now, then reconciles that against what the platform believed before the disconnect.","Three outcomes: a call that ended during the outage is finalized immediately, a call still up is hydrated back into memory, and a live channel nobody knew about is synthesized so its eventual hangup still produces a log."],
+    io:["reconcile() is pure and unit-tested","guarantees exactly one call.ended per call","needs `reporting` on the AMI user's write perms"] },
+
+  ari:{ name:"ARI + Stasis", meta:"AriClient · AriConnection", phases:[11],
+    blurb:["The media-control surface. REST for commands, a Stasis WebSocket for events.","Stasis events are normalized into the very same call.* vocabulary AMI produces, so everything downstream is indifferent to which driver a connection uses."],
+    io:["answer · hangup · playback · snoop","continueInDialplan · get/setChannelVar","PbxConnection.driver = 'ari'"] },
+
+  routing:{ name:"Routing", meta:"RoutingService", phases:[11],
+    blurb:["CRM-driven IVR. On StasisStart the caller's number is looked up, and the answer decides where the call goes: a known VIP to the priority queue, a known contact to their preferred queue, everyone else to general."],
+    io:["decide(number, contact) → RoutingDecision","sets CTI_KNOWN · CTI_PRIORITY · CTI_QUEUE"] },
+
+  callstate:{ name:"Call state", meta:"CallStateService", phases:[1,7],
+    blurb:["The heart of the system. Asterisk speaks in channels; CRMs think in calls. This service correlates every channel sharing a Linkedid into one call with one identity, one start, one disposition.","State is held in memory for speed and written through to Redis on every mutation, so a restart mid-call loses nothing."],
+    io:["Linkedid correlation · single-writer per connection","Redis: call:{conn}:{linkedid}, 6h TTL","hydrate() · finalizeNow() · activeCalls()"] },
+
+  bus:{ name:"Event bus", meta:"@nestjs/event-emitter", phases:[1],
+    blurb:["The contract between telephony and everything else. No AMI or ARI type is allowed past this line.","Downstream code only ever sees the normalized vocabulary."],
+    io:["call.ringing · call.answered · call.ended","agent.state · queue.stats","ami.event (internal only)"] },
+
+  registry:{ name:"Tenant registry", meta:"TenantRegistry · CryptoService", phases:[2],
+    blurb:["Resolves which tenant owns a call on a PBX that may be shared by several of them: dialplan context first, then extension pattern, then the sole tenant if there is only one.","Every credential it holds is encrypted at rest; API keys and connector tokens are stored only as hashes."],
+    io:["PbxConnection → Tenant → Agent + CrmIntegration","AES-256-GCM under CREDS_KEY","sha256 for API keys and tokens"] },
+
+  redis:{ name:"Redis", meta:"call state · queues · limits", phases:[2,7],
+    blurb:["Three jobs at once: durable call state, the BullMQ job store, and the shared counter behind the originate rate limit — which is what makes the limit correct across more than one instance."],
+    io:["write-through call snapshots","BullMQ queues + dead letters","throttler storage"] },
+
+  pg:{ name:"PostgreSQL", meta:"TypeORM · migrations", phases:[2,6],
+    blurb:["The registry's home: connections, tenants, agents, integrations. Schema changes go through migrations — synchronize is off everywhere."],
+    io:["migrationsRun on boot","Init · AgentSip · AriDriver"] },
+
+  queues:{ name:"Durable delivery queues", meta:"BullMQ · 5 queues + dead letters", phases:[2,8],
+    blurb:["Nothing is delivered to a CRM straight off the event bus. Every integration gets its own queue, its own retries with backoff, and its own dead-letter pile when retries run out.","A CRM being down for an hour delays call logs; it never loses them."],
+    io:["webhook-delivery · zoho-delivery · salesforce-delivery","hubspot-delivery · dynamics-delivery","dead letters are listable and retryable"] },
+
+  webhooks:{ name:"Signed webhooks", meta:"generic integration", phases:[1,2],
+    blurb:["The escape hatch for any CRM without a dedicated adapter. Normalized call events are POSTed with an HMAC signature the receiver verifies against the tenant's secret."],
+    io:["POST tenant webhook URL","HMAC-SHA256 signature header"] },
+
+  zoho:{ name:"Zoho PhoneBridge", meta:"screen pop · call log · click-to-call", phases:[3],
+    blurb:["Pops the matching record on ringing, updates on answer, writes the call on hangup. Click-to-call arrives back through a per-integration callback token."],
+    io:["OAuth refresh → access, invalidated on 401","POST /v1/integrations/zoho/:tenant/click-to-call"] },
+
+  salesforce:{ name:"Salesforce Open CTI", meta:"softphone · Task logging", phases:[4],
+    blurb:["Drives the Open CTI softphone inside Salesforce — screen pop and click-to-dial — and writes each finished call as a Task owned by the right agent."],
+    io:["Call Center definition XML","Agent.crmRefs.salesforce → OwnerId"] },
+
+  hubspot:{ name:"HubSpot", meta:"call engagements", phases:[10],
+    blurb:["Logs each completed call as a Call engagement against the matching contact."],
+    io:["engagements API","OAuth refresh token per tenant"] },
+
+  dynamics:{ name:"Dynamics 365", meta:"Dataverse phonecall", phases:[10],
+    blurb:["Writes a phonecall activity into Dataverse when the call ends."],
+    io:["Dataverse Web API","OAuth client credentials"] },
+
+  rest:{ name:"REST API v1", meta:"+ Swagger at /docs", phases:[1,5,7],
+    blurb:["The tenant-facing surface, authenticated by API key. Originate is rate-limited per tenant and per agent session — making phones ring is not something you leave unmetered."],
+    io:["POST /v1/calls/originate","GET /v1/calls · GET /v1/agents/state","429 past ORIGINATE_RATE_LIMIT"] },
+
+  softphone:{ name:"Softphone", meta:"WebSocket + WebRTC", phases:[4,10],
+    blurb:["A per-agent WebSocket carries call, presence, and queue events to the browser in real time. With WebRTC configured, the same page also carries the audio: JsSIP registers the agent's SIP endpoint over wss.","Signalling and media are separate paths — events come from the platform, audio goes straight to the PBX."],
+    io:["/softphone-ws · HS256 agent tokens","GET /v1/softphone/webrtc-config","self-hosted JsSIP bundle"] },
+
+  telephonyapi:{ name:"Supervisor & wallboard", meta:"coaching · queue stats", phases:[11],
+    blurb:["Live supervision. Listen silently, whisper to the agent only, or barge into the conversation — over AMI ChanSpy or an ARI snoop channel, whichever the connection uses.","Queue statistics are aggregated continuously from app_queue events and pushed to the wallboard."],
+    io:["POST /v1/supervisor/monitor · spy | whisper | barge","GET /v1/queues","GET /health/ari"] },
+
+  recordings:{ name:"Recording proxy", meta:"signed capability URLs", phases:[5,9],
+    blurb:["Recordings are never handed out as raw file paths. The proxy mints a short-lived HMAC-signed URL scoped to one basename, and for a reverse-connected site it streams the file through the tunnel rather than keeping a copy."],
+    io:["GET /v1/recordings/:token","15-minute expiry, traversal-proof","pulls via /connector-files when reverse"] },
+
+  admin:{ name:"Admin console", meta:"registry CRUD · dead letters", phases:[5,8],
+    blurb:["Manage connections, tenants, agents, and integrations, then hot-reload the registry without a restart. Also where failed deliveries are inspected and requeued."],
+    io:["GET /admin · /admin/overview","POST /admin/reload","GET + retry /admin/dead-letters"] },
+
+  obs:{ name:"Observability", meta:"metrics · health · logs", phases:[8],
+    blurb:["Structured JSON logs, Prometheus metrics, and separate liveness and readiness probes.","One standing rule came out of this: every new queue must be registered with both the admin console and the metrics collector, or it goes silently unmonitored."],
+    io:["GET /metrics","GET /health/live · /health/ready","LOG_FORMAT=json"] }
+};
+
+/* Undirected in reality; the arrow shows where events travel. */
+const EDGES = [
+  ["pstn","pbx"],["phones","pbx"],
+  ["pbx","direct"],["pbx","agent"],["pbx","ari"],
+  ["agent","tunnelws"],["agent","filesws"],
+  ["direct","amiclient"],["tunnelws","amiclient"],
+  ["amiclient","callstate"],["amiclient","resync"],["supervisor","amiclient"],["resync","supervisor"],
+  ["resync","callstate"],["ari","callstate"],["ari","routing"],["routing","registry"],
+  ["callstate","registry"],["callstate","redis"],["callstate","bus"],["registry","pg"],
+  ["callstate","recordings"],
+  ["bus","queues"],["queues","redis","left"],
+  ["queues","webhooks"],["queues","zoho"],["queues","salesforce"],["queues","hubspot"],["queues","dynamics"],
+  ["bus","softphone"],["bus","obs"],["queues","obs"],
+  ["zoho","rest"],
+  ["rest","supervisor","right"],["softphone","supervisor","right"],["softphone","pbx","right"],
+  ["telephonyapi","supervisor","right"],["telephonyapi","ari","right"],
+  ["recordings","filesws","left"],["admin","registry","left"],["admin","queues","left"]
+];
+
+const FLOWS = [
+  { id:"inbound", name:"Inbound call → screen pop", steps:[
+    { t:"The carrier delivers a call to the customer's trunk.", e:[["pstn","pbx"]] },
+    { t:"Asterisk rings the agent's extension. Newchannel and DialBegin cross the link as they happen.", e:[["pbx","direct"],["direct","amiclient"]] },
+    { t:"Raw AMI frames stop here. Channels sharing a Linkedid are correlated into a single call.", e:[["amiclient","callstate"]] },
+    { t:"The registry decides which tenant owns it — dialplan context first, extension pattern second.", e:[["callstate","registry"]] },
+    { t:"call.ringing is published once, in the normalized vocabulary. No AMI type goes past this point.", e:[["callstate","bus"]] },
+    { t:"Each enabled integration gets its own durable job, so a slow CRM cannot stall the others.", e:[["bus","queues"]] },
+    { t:"The contact pops in the CRM and the agent's softphone lights up, while the phone is still ringing.", e:[["queues","zoho"],["queues","salesforce"],["bus","softphone"]] }
+  ]},
+
+  { id:"click", name:"Click-to-call from the CRM", steps:[
+    { t:"An agent clicks a phone number in Zoho. Zoho calls the tenant's click-to-call endpoint.", e:[["zoho","rest"]] },
+    { t:"The tenant's originate budget is checked first. Over the limit is a 429, not a ringing phone.", n:["rest"] },
+    { t:"The supervisor issues an AMI Originate carrying a callRef that ties this call to the CRM record.", e:[["rest","supervisor"]] },
+    { t:"The command travels back down the same link. The agent's own phone rings first.", e:[["supervisor","amiclient"],["direct","amiclient"],["pbx","direct"]] },
+    { t:"Once the agent picks up, Asterisk dials the customer.", e:[["pstn","pbx"]] },
+    { t:"From here it is an ordinary call — same correlation, same events, now with the callRef attached.", e:[["amiclient","callstate"],["callstate","bus"]] }
+  ]},
+
+  { id:"log", name:"Hangup → CRM call log", steps:[
+    { t:"Hangup arrives. Duration, billsec, and disposition are computed from the correlated channels.", e:[["amiclient","callstate"]] },
+    { t:"If MixMonitor recorded the call, a signed URL good for fifteen minutes is minted for it.", e:[["callstate","recordings"]] },
+    { t:"call.ended is published exactly once, carrying the callRef and the recording link.", e:[["callstate","bus"]] },
+    { t:"One durable job per enabled integration.", e:[["bus","queues"]] },
+    { t:"Adapters write their native shape: a Zoho call, a Salesforce Task, a HubSpot engagement, a Dataverse phonecall.", e:[["queues","zoho"],["queues","salesforce"],["queues","hubspot"],["queues","dynamics"],["queues","webhooks"]] },
+    { t:"A job that exhausts its retries lands in dead letters, where it can be inspected and requeued by hand.", e:[["admin","queues"]] }
+  ]},
+
+  { id:"restart", name:"Restart with calls in flight", steps:[
+    { t:"The process dies mid-call. In a purely in-memory design, every call in flight would never be logged.", n:["callstate"] },
+    { t:"On boot, call state is read back out of Redis.", e:[["callstate","redis"]] },
+    { t:"The AMI connection comes back and emits pbx.connected.", e:[["amiclient","resync"]] },
+    { t:"Resync asks Asterisk what is actually live right now — CoreShowChannels, not an assumption.", e:[["resync","supervisor"],["supervisor","amiclient"],["direct","amiclient"],["pbx","direct"]] },
+    { t:"Reconcile: ended during the outage is finalized now, still up is hydrated, unknown but live is synthesized.", e:[["resync","callstate"]] },
+    { t:"Every call still produces exactly one call.ended. Verified by killing the process mid-call.", e:[["callstate","bus"],["bus","queues"]] }
+  ]},
+
+  { id:"coach", name:"Supervisor coaching a live call", steps:[
+    { t:"A supervisor picks an agent and a mode: listen silently, whisper to the agent only, or barge in.", n:["telephonyapi"] },
+    { t:"The agent's live channel is resolved from current call state.", n:["telephonyapi","callstate"] },
+    { t:"On an AMI connection this becomes a ChanSpy Originate with the option flags for the chosen mode.", e:[["telephonyapi","supervisor"],["supervisor","amiclient"],["direct","amiclient"],["pbx","direct"]] },
+    { t:"On an ARI connection it becomes a snoop channel with the matching spy and whisper direction.", e:[["telephonyapi","ari"],["pbx","ari"]] },
+    { t:"The supervisor is now on the call — hearing it, or in it.", n:["phones"] }
+  ]},
+
+  { id:"firewall", name:"Reaching a PBX behind a firewall", steps:[
+    { t:"Nothing is opened inbound. The on-prem agent dials out to the platform over wss.", e:[["pbx","agent"],["agent","tunnelws"]] },
+    { t:"The tunnel carries the raw AMI stream. The login still runs cloud-side, so the premises never hold PBX credentials.", e:[["tunnelws","amiclient"]] },
+    { t:"Heartbeats reap dead tunnels; a reconnect resyncs like any other, so an outage costs no call logs.", e:[["amiclient","resync"]] },
+    { t:"Recordings ride a second outbound socket, fetched only when asked for.", e:[["recordings","filesws"],["agent","filesws"]] },
+    { t:"The CRM only ever receives a short-lived signed URL — never a path, never a copy.", e:[["callstate","recordings"],["bus","queues"]] }
+  ]},
+
+  { id:"ivr", name:"CRM-driven routing over ARI", steps:[
+    { t:"The call enters a Stasis application instead of a plain dialplan context.", e:[["pbx","ari"]] },
+    { t:"On StasisStart, the caller's number is looked up against the tenant's CRM.", e:[["ari","routing"]] },
+    { t:"decide(): a VIP goes to the priority queue, a known contact to their preferred queue, everyone else to general.", n:["routing"] },
+    { t:"CTI_KNOWN, CTI_PRIORITY and CTI_QUEUE are set on the channel.", e:[["routing","registry"]] },
+    { t:"continueInDialplan hands the call back to Asterisk, now routed by who is calling.", e:[["pbx","ari"]] },
+    { t:"Stasis events feed the same normalized call.* vocabulary AMI does. Downstream never knows the difference.", e:[["ari","callstate"]] }
+  ]}
+];
+
+/* ─────────────────────────────────────────────────────────
+   Cluster view (Phase 12a) — the deployment picture.
+
+   The signal-path view above is the logical one: what talks to what,
+   drawn as one process. This one answers a different question — what
+   happens when there is more than one replica. Before Phase 12a the
+   answer was "one call becomes N CRM records".
+   ───────────────────────────────────────────────────────── */
+const C_BANDS = [
+  { ref:"A", name:"Premises", note:"one PBX, many replicas", ids:["cpbx","cagent"] },
+  { ref:"B", name:"Ingress", note:"any replica may answer", ids:["clb"] },
+  { ref:"C", name:"Replicas", note:"identical today; split by role in 12b", ids:["cowner","cpeer1","cpeer2"] },
+  { ref:"D", name:"Coordination", note:"Redis — now a correctness dependency", ids:["clease","cbus","crpc"] },
+  { ref:"E", name:"Shared state", note:"so every replica answers alike", ids:["ccallstate","cpresence","cqstats","cqueues"] },
+  { ref:"F", name:"Downstream", note:"exactly once", ids:["ccrm","cagents"] },
+];
+
+const CN = {
+  cpbx:{ name:"Asterisk / FreePBX", meta:"one AMI socket, not N", phases:[12],
+    blurb:["The PBX is happy to accept a manager session from every replica — which is exactly the problem. AMI is a broadcast firehose, so each connected replica sees every event and independently concludes a call happened."],
+    io:["AMI 5038 — only the lease holder connects","reverse mode: the PBX side dials out instead"] },
+  cagent:{ name:"On-prem connector", meta:"lands on one replica", phases:[12],
+    blurb:["Dials out over wss and lands wherever the load balancer puts it. That replica force-claims ownership, because a tunnelled connection can only be served where the socket physically is.","This is why reverse connections are claimed tunnel-first while direct ones are claimed lease-first."],
+    io:["/connector-ws and /connector-files","leased separately — they can land on different replicas"] },
+
+  clb:{ name:"Load balancer / ingress", meta:"no affinity needed", phases:[12],
+    blurb:["Agent WebSockets and API calls can land on any replica. Nothing is sticky: events reach every replica over the bus, and commands are routed to whichever replica holds the PBX socket."],
+    io:["/softphone-ws → any replica","/connector-ws → pins ownership to that replica"] },
+
+  cowner:{ name:"Replica — lease holder", meta:"sole event source", phases:[12],
+    blurb:["Holds the Redis lease for this PBX, so it is the only replica running the correlation engine and the only one enqueuing delivery. Loses the lease → stops the connection immediately.","Everything that makes N>1 safe rests on this being exactly one replica."],
+    io:["AMI socket + correlation + enqueue","renews its lease every 10s","releases on SIGTERM for fast handover"] },
+  cpeer1:{ name:"Replica — peer", meta:"no lease, no socket", phases:[12],
+    blurb:["Owns nothing on this PBX and holds no AMI socket. It still serves HTTP and agent WebSockets, and receives call events over the cluster bus.","`GET /admin/cluster` reporting `owned: []` here is normal and healthy — not a fault."],
+    io:["serves agent sockets","routes commands to the owner over RPC","must NOT enqueue mirrored events"] },
+  cpeer2:{ name:"Replica — peer", meta:"sweeps for orphans", phases:[12],
+    blurb:["Every replica sweeps every 5 seconds for unowned connections. That is how a PBX orphaned by a crashed replica gets picked up, and how a newly started replica takes its share without any coordinator."],
+    io:["SET NX every 5s on unowned connections","claims within one lease TTL after a crash"] },
+
+  clease:{ name:"Ownership leases", meta:"cti:lease:{kind}:{id}", phases:[12],
+    blurb:["A key holding the owner's pod id under a 30-second TTL, renewed every 10s. Renewal and release are Lua compare-and-swap against that id, so a replica away longer than the TTL can never reclaim ownership someone else has taken.","The split-brain guard: a failed renewal stops the connection on the spot."],
+    io:["SET NX — direct mode","SET (forced) — reverse tunnel arrival","compare-and-delete on shutdown"] },
+  cbus:{ name:"Cluster event bus", meta:"PUBLISH cti:bus", phases:[12],
+    blurb:["Mirrors call.*, agent.* and queue.* to every replica and re-emits them locally, so existing consumers need no changes and an agent's screen pop arrives wherever their socket happens to be.","Raw ami.event is deliberately excluded — it is a per-connection firehose meaningful only to the owner."],
+    io:["tagged with the origin pod id (own echo ignored)","mirrored payloads carry a marker dispatchers skip"] },
+  crpc:{ name:"Command RPC", meta:"cti:rpc:req / reply", phases:[12],
+    blurb:["Request/reply over pub/sub so a replica that does not own a PBX can still serve click-to-call, coaching, CoreShowChannels and recording fetches. Every replica sees the request; only the lease holder acts."],
+    io:["15s timeout — longer than the 10s AMI action","the PBX's own error text propagates"] },
+
+  ccallstate:{ name:"Call state", meta:"call:{conn}:{id} · 6h", phases:[12],
+    blurb:["Write-through from the owner, read cluster-wide, so GET /v1/calls is correct from any replica and survives a restart.","Finalisation additionally takes a SET NX claim key, because a handover can briefly leave two replicas holding the same call."],
+    io:["cti:finalized:{conn}:{id} — exactly one call.ended"] },
+  cpresence:{ name:"Agent presence", meta:"cti:presence:{tenant}", phases:[12],
+    blurb:["Derived on the owner, stored in Redis, read by whichever replica answers GET /v1/agents/state. Reading local memory would make the answer depend on which replica you happened to reach."],
+    io:["hash keyed by extension, 24h TTL"] },
+  cqstats:{ name:"Queue stats", meta:"cti:qstats:{conn}:{queue}", phases:[12],
+    blurb:["Aggregated on the owner but hydrated from Redis on first touch, so counters carry across an ownership handover.","This also fixed a flaw that predated clustering: the wallboard used to reset to zero on every restart."],
+    io:["24h TTL","GET /v1/queues identical on every replica"] },
+  cqueues:{ name:"Delivery queues", meta:"BullMQ — already safe", phases:[12],
+    blurb:["Consumption was never the problem: Redis-side job locking already guaranteed each job ran once. The bug was on the producer side, where every replica enqueued its own job."],
+    io:["every replica is a worker","effective concurrency scales with replica count"] },
+
+  ccrm:{ name:"CRM records", meta:"one per call", phases:[12],
+    blurb:["The measurable outcome. Two replicas and one call used to produce two Zoho calls, two Salesforce Tasks and two signed webhooks. Now: one of each, verified live."],
+    io:["Zoho · Salesforce · HubSpot · Dynamics · webhooks"] },
+  cagents:{ name:"Agent softphones", meta:"any replica", phases:[12],
+    blurb:["Each agent's socket lives on one replica, but every replica receives the events, so pops arrive regardless of where the socket landed.","Events carry their own agentExt, so no replica keeps per-call routing state — which is what lets the API tier scale independently."],
+    io:["/softphone-ws","call.* · agent.state · queue.stats"] },
+};
+
+const C_EDGES = [
+  ["cpbx","cowner"],["cagent","cpbx"],["cagent","clb"],
+  ["clb","cowner"],["clb","cpeer1"],["clb","cpeer2"],
+  ["cowner","clease"],["cpeer1","clease"],["cpeer2","clease"],
+  ["cowner","cbus"],["cbus","cpeer1"],["cbus","cpeer2"],
+  ["cpeer1","crpc"],["crpc","cowner"],
+  ["cowner","ccallstate"],["cowner","cpresence"],["cowner","cqstats"],["cowner","cqueues"],
+  ["cpeer1","cpresence","left"],["cpeer2","cqstats","left"],
+  ["cqueues","ccrm"],
+  ["cpeer1","cagents"],["cpeer2","cagents"],
+];
+
+const C_FLOWS = [
+  { id:"c-once", name:"One call, three replicas", steps:[
+    { t:"The PBX would happily accept a manager session from all three replicas. Only the lease holder connects.", e:[["cpbx","cowner"]] },
+    { t:"That lease is the whole guarantee: one replica, one correlation engine, one set of events.", e:[["cowner","clease"]] },
+    { t:"The owner enqueues delivery — exactly once, because it is the only replica that derived the event.", e:[["cowner","cqueues"]] },
+    { t:"The same event is mirrored to the peers so agent screen pops still arrive. They receive it, but must not enqueue it.", e:[["cowner","cbus"],["cbus","cpeer1"],["cbus","cpeer2"]] },
+    { t:"Peers push to their own agent sockets. Mirrored copies carry a marker every dispatcher skips.", e:[["cpeer1","cagents"],["cpeer2","cagents"]] },
+    { t:"One CRM record per call. Before Phase 12a this was three.", e:[["cqueues","ccrm"]] }
+  ]},
+  { id:"c-handover", name:"The owning replica dies", steps:[
+    { t:"The owner is holding a live call and the lease that goes with it.", n:["cowner","clease"] },
+    { t:"On SIGTERM it releases the lease immediately. A hard kill skips this, and the lease instead expires after its TTL.", e:[["cowner","clease"]] },
+    { t:"Peers sweep every 5 seconds and one wins the SET NX.", e:[["cpeer1","clease"],["cpeer2","clease"]] },
+    { t:"The new owner connects and reloads the call from shared state — nothing in flight is lost.", e:[["cpbx","cowner"],["cowner","ccallstate"]] },
+    { t:"It resyncs against CoreShowChannels, then the eventual hangup still emits exactly one call.ended.", e:[["cowner","cqueues"],["cqueues","ccrm"]] }
+  ]},
+  { id:"c-rpc", name:"Click-to-call on the wrong replica", steps:[
+    { t:"The request lands on a replica that owns nothing — normal, since the load balancer has no affinity.", e:[["clb","cpeer1"]] },
+    { t:"It authenticates, scopes the tenant and checks the rate limit locally.", n:["cpeer1"] },
+    { t:"Then publishes the command. Every replica sees it; only the lease holder acts on it.", e:[["cpeer1","crpc"],["crpc","cowner"]] },
+    { t:"The owner runs the AMI Originate and replies on a channel private to the caller.", e:[["cpbx","cowner"]] },
+    { t:"Without this, click-to-call would fail on every replica not holding the customer's reverse tunnel.", n:["cagent"] }
+  ]},
+  { id:"c-tunnel", name:"A reverse tunnel picks its owner", steps:[
+    { t:"The customer's connector agent dials out — no inbound firewall holes.", e:[["cagent","clb"]] },
+    { t:"It lands wherever the ingress puts it, which may not be the current lease holder.", e:[["clb","cpeer1"]] },
+    { t:"That replica force-claims the lease. The connection can only be served where the socket physically is.", e:[["cpeer1","clease"]] },
+    { t:"The previous holder's next renewal returns 0, so it stands down at once.", e:[["cowner","clease"]] },
+    { t:"Recordings ride a second socket, leased separately — the two can land on different replicas.", n:["cagent"] }
+  ]},
+];
+
+/* Both datasets behind one key, so switching views is a data swap. */
+const VIEWS = {
+  signal:  { bands:BANDS,   nodes:N,  edges:EDGES,   flows:FLOWS,
+             legend:"A call enters at the top and leaves as a CRM record. Each zone is one layer of that journey, and every box is a real component you can open in the repo." },
+  cluster: { bands:C_BANDS, nodes:CN, edges:C_EDGES, flows:C_FLOWS,
+             legend:"What changes when the platform runs as more than one replica. Exactly one replica drives each PBX; the rest still serve agents and route commands to it." },
+};
+let view = VIEWS.signal;
+
+/* ─────────────────────────────────────────────────────────
+   Render
+   ───────────────────────────────────────────────────────── */
+const $ = (s,r)=> (r||document).querySelector(s);
+const bandsEl = $("#bands"), wireGroup = $("#wireGroup"), board = $("#board");
+const inspBody = $("#inspBody"), inspMode = $("#inspMode");
+const player = $("#player"), stepList = $("#stepList");
+const refOf = {};
+
+const nodeEls = {};
+const flowChips = $("#flowChips");
+
+/**
+ * Builds the board, the wires and the flow chips from whichever dataset is
+ * active. Called once at boot and again whenever the view is switched — the
+ * rendering engine never had to know there was more than one dataset.
+ */
+function buildBoard(){
+  bandsEl.innerHTML = "";
+  wireGroup.innerHTML = "";
+  flowChips.innerHTML = "";
+  edgePaths.length = 0;
+  for (const k of Object.keys(nodeEls)) delete nodeEls[k];
+  for (const k of Object.keys(refOf)) delete refOf[k];
+
+  view.bands.forEach(band=>{
+    const sec = document.createElement("section");
+    sec.className = "band";
+    const solo = band.ids.length === 1;
+    sec.innerHTML =
+      '<div class="zone">' +
+        '<div class="zone__ref">'+band.ref+'</div>' +
+        '<div><div class="zone__name">'+band.name+'</div>' +
+        '<div class="zone__note">'+band.note+'</div></div>' +
+      '</div>' +
+      '<div class="nodes'+(solo?" nodes--solo":"")+'"></div>';
+    const holder = $(".nodes", sec);
+    band.ids.forEach((id,i)=>{
+      const d = view.nodes[id];
+      const ref = band.ref + (i+1);
+      refOf[id] = ref;
+      const b = document.createElement("button");
+      b.className = "node";
+      b.dataset.id = id;
+      b.innerHTML =
+        '<span class="node__lamp"></span>' +
+        '<span class="node__ref">'+ref+'</span>' +
+        '<span class="node__name">'+d.name+'</span>' +
+        '<span class="node__meta">'+d.meta+'</span>';
+      b.addEventListener("click", ()=> openNode(id));
+      holder.appendChild(b);
+    });
+    bandsEl.appendChild(sec);
+  });
+
+  document.querySelectorAll(".node").forEach(el=> nodeEls[el.dataset.id] = el);
+
+  view.flows.forEach(f=>{
+    const b = document.createElement("button");
+    b.className = "chip"; b.type = "button"; b.textContent = f.name;
+    b.setAttribute("aria-pressed","false");
+    b.dataset.flow = f.id;
+    b.addEventListener("click", ()=> state.flow === f.id ? reset() : startFlow(f.id));
+    flowChips.appendChild(b);
+  });
+
+  view.edges.forEach((e,i)=>{
+    const p = document.createElementNS("http://www.w3.org/2000/svg","path");
+    p.setAttribute("class","edge");
+    p.dataset.key = edgeKey(e[0],e[1]);
+    wireGroup.appendChild(p);
+    edgePaths.push({ a:e[0], b:e[1], lane:e[2]||null, el:p, i:i });
+  });
+}
+
+const phaseChips = $("#phaseChips");
+PHASES.forEach((label,i)=>{
+  const b = document.createElement("button");
+  b.className = "chip chip--num"; b.type = "button"; b.textContent = i;
+  b.title = "Phase " + i + " — " + label;
+  b.setAttribute("aria-pressed","false");
+  b.dataset.phase = String(i);
+  b.addEventListener("click", ()=> state.phase === i ? reset() : showPhase(i));
+  phaseChips.appendChild(b);
+});
+
+/* ─────────────────────────────────────────────────────────
+   Wires
+   ───────────────────────────────────────────────────────── */
+const edgePaths = [];
+const edgeKey = (a,b)=> a + ">" + b;
+
+function box(id){
+  const el = nodeEls[id], br = board.getBoundingClientRect(), r = el.getBoundingClientRect();
+  return {
+    l:r.left-br.left, r:r.right-br.left, t:r.top-br.top, b:r.bottom-br.top,
+    cx:r.left-br.left+r.width/2, cy:r.top-br.top+r.height/2
+  };
+}
+
+function layout(){
+  const w = board.clientWidth, h = board.scrollHeight;
+  const svg = $("#wires");
+  svg.setAttribute("viewBox","0 0 "+w+" "+h);
+  svg.setAttribute("width",w); svg.setAttribute("height",h);
+
+  const pad = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--lane-pad")) || 58;
+  const gap = pad > 40 ? 9 : 5;
+  let leftN = 0, rightN = 0;
+
+  edgePaths.forEach(function(ed){
+    const A = box(ed.a), B = box(ed.b);
+    let d;
+    if (B.t > A.b + 6){                      // downward: elbow at the midline
+      const ym = (A.b + B.t)/2 + ((ed.i % 5) - 2) * 5;
+      d = "M"+A.cx+","+A.b+" V"+ym+" H"+B.cx+" V"+B.t;
+    } else if (A.t > B.b + 6){               // upward: out to a side lane
+      const right = ed.lane ? ed.lane === "right" : (A.cx + B.cx)/2 > w/2;
+      const k = right ? rightN++ : leftN++;
+      const x = right ? (w - 12 - k*gap) : (12 + k*gap);
+      const ax = right ? A.r : A.l, bx = right ? B.r : B.l;
+      d = "M"+ax+","+A.cy+" H"+x+" V"+B.cy+" H"+bx;
+    } else {                                  // lateral within a zone
+      const fwd = A.cx < B.cx;
+      const ax = fwd ? A.r : A.l, bx = fwd ? B.l : B.r;
+      const xm = (ax + bx)/2;
+      d = "M"+ax+","+A.cy+" H"+xm+" V"+B.cy+" H"+bx;
+    }
+    ed.el.setAttribute("d", d);
+  });
+}
+
+/* ─────────────────────────────────────────────────────────
+   State
+   ───────────────────────────────────────────────────────── */
+const state = { flow:null, step:0, phase:null, open:null, timer:null };
+
+function clearMarks(){
+  Object.keys(nodeEls).forEach(id=>{
+    nodeEls[id].classList.remove("is-active","is-inflow","is-dim","is-marked","is-open");
+  });
+  edgePaths.forEach(ed=> ed.el.classList.remove("edge--live","edge--muted"));
+}
+
+function syncChips(){
+  flowChips.querySelectorAll(".chip").forEach(c=>
+    c.setAttribute("aria-pressed", String(c.dataset.flow === state.flow)));
+  phaseChips.querySelectorAll(".chip").forEach(c=>
+    c.setAttribute("aria-pressed", String(Number(c.dataset.phase) === state.phase)));
+}
+
+function reset(){
+  stopPlay();
+  state.flow = null; state.step = 0; state.phase = null; state.open = null;
+  clearMarks(); syncChips();
+  player.hidden = true;
+  inspMode.textContent = "Legend";
+  renderLegend();
+}
+
+/* ── inspector: legend ── */
+function renderLegend(){
+  inspBody.innerHTML =
+    '<div>' +
+      '<div class="insp__ref">How to read this drawing</div>' +
+      '<h2 class="insp__title">' + view.bands.length + ' zones, top to bottom</h2>' +
+    '</div>' +
+    '<p class="insp__blurb">' + view.legend + '</p>' +
+    '<p class="insp__blurb">Pick any box for what it does and where it lives. Or run one of the ' +
+      view.flows.length + ' flows above to watch a specific journey light up step by step.</p>' +
+    '<div><div class="subhead">Indicators</div>' +
+      '<div class="legend">' +
+        '<div><span class="dot dot--a"></span><span>Live in the current step — the signal is here now</span></div>' +
+        '<div><span class="dot dot--l"></span><span>Introduced in the selected build phase</span></div>' +
+        '<div><span class="dot dot--n"></span><span>Idle</span></div>' +
+      '</div></div>' +
+    '<div><div class="subhead">Wires</div>' +
+      '<div class="legend">' +
+        '<div><span class="dot dot--n"></span><span>Arrowheads point the way <b>events</b> travel</span></div>' +
+        '<div><span class="dot dot--n"></span><span>Commands — originate, ChanSpy, snoop — ride the same links in reverse</span></div>' +
+      '</div></div>';
+}
+
+/* ── inspector: one node ── */
+function openNode(id){
+  stopPlay();
+  state.flow = null; state.phase = null; state.open = id;
+  clearMarks(); syncChips();
+  player.hidden = true;
+
+  const d = view.nodes[id];
+  const band = view.bands.find(b=> b.ids.indexOf(id) !== -1);
+  nodeEls[id].classList.add("is-active");
+  edgePaths.forEach(ed=>{
+    if (ed.a === id || ed.b === id){
+      ed.el.classList.add("edge--live");
+      const other = ed.a === id ? ed.b : ed.a;
+      nodeEls[other].classList.add("is-inflow");
+    } else {
+      ed.el.classList.add("edge--muted");
+    }
+  });
+  Object.keys(nodeEls).forEach(k=>{
+    const el = nodeEls[k];
+    if (!el.classList.contains("is-active") && !el.classList.contains("is-inflow")) el.classList.add("is-dim");
+  });
+
+  inspMode.textContent = "Component";
+  inspBody.innerHTML =
+    '<div>' +
+      '<div class="insp__ref">'+refOf[id]+' &nbsp;·&nbsp; '+band.name.toUpperCase()+'</div>' +
+      '<h2 class="insp__title">'+d.name+'</h2>' +
+    '</div>' +
+    d.blurb.map(p=> '<p class="insp__blurb">'+p+'</p>').join("") +
+    '<div><div class="subhead">Interfaces</div>' +
+      '<div class="pathlist">'+ d.io.map(x=> '<span>'+x+'</span>').join("") +'</div></div>' +
+    '<div><div class="subhead">Built in</div>' +
+      '<div class="tagrow">'+ d.phases.map(p=>
+        '<span class="tag tag--accent">Phase '+p+' — '+PHASES[p]+'</span>').join("") +'</div></div>';
+  inspBody.scrollTop = 0;
+}
+
+/* ── inspector: a phase ── */
+function showPhase(i){
+  stopPlay();
+  state.flow = null; state.open = null; state.phase = i;
+  clearMarks(); syncChips();
+  player.hidden = true;
+
+  const hit = Object.keys(view.nodes).filter(id=> view.nodes[id].phases.indexOf(i) !== -1);
+  Object.keys(nodeEls).forEach(id=>{
+    if (hit.indexOf(id) !== -1) nodeEls[id].classList.add("is-marked");
+    else nodeEls[id].classList.add("is-dim");
+  });
+  edgePaths.forEach(ed=> ed.el.classList.add("edge--muted"));
+
+  inspMode.textContent = "Build phase";
+  inspBody.innerHTML =
+    '<div>' +
+      '<div class="insp__ref">Phase '+i+' of 11</div>' +
+      '<h2 class="insp__title">'+PHASES[i]+'</h2>' +
+    '</div>' +
+    '<p class="insp__blurb">'+hit.length+' component'+(hit.length===1?"":"s")+
+      ' on this drawing '+(hit.length===1?"was":"were")+' introduced or reworked in this phase.</p>' +
+    '<div><div class="subhead">Touched here</div>' +
+      '<div class="tagrow">'+ hit.map(id=>
+        '<span class="tag">'+refOf[id]+' '+view.nodes[id].name+'</span>').join("") +'</div></div>' +
+    '<div><div class="subhead">The whole sequence</div>' +
+      '<div class="kv">'+ PHASES.map((p,k)=>
+        '<div>'+(k===i?'<b>'+k+' &nbsp;'+p+'</b>':k+' &nbsp;'+p)+'</div>').join("") +'</div></div>';
+  inspBody.scrollTop = 0;
+}
+
+/* ── inspector: a flow ── */
+function startFlow(id){
+  stopPlay();
+  state.flow = id; state.step = 0; state.phase = null; state.open = null;
+  syncChips();
+
+  const f = view.flows.find(x=> x.id === id);
+  $("#flowName").textContent = f.name;
+  $("#flowCount").textContent = f.steps.length + " steps";
+  stepList.innerHTML = f.steps.map((s,k)=>
+    '<li class="step" data-step="'+k+'"><span class="step__n">'+
+    String(k+1).padStart(2,"0")+'</span><span>'+s.t+'</span></li>').join("");
+  stepList.querySelectorAll(".step").forEach(li=>
+    li.addEventListener("click", ()=> setStep(Number(li.dataset.step))));
+  player.hidden = false;
+
+  inspMode.textContent = "Flow";
+  inspBody.innerHTML =
+    '<div>' +
+      '<div class="insp__ref">Trace &nbsp;·&nbsp; '+f.steps.length+' steps</div>' +
+      '<h2 class="insp__title">'+f.name+'</h2>' +
+    '</div>' +
+    '<p class="insp__blurb">Step through below, or press Play. Everything off the path dims; ' +
+      'the lit wire is where the signal is right now.</p>';
+  setStep(0);
+}
+
+function setStep(k){
+  const f = view.flows.find(x=> x.id === state.flow);
+  if (!f) return;
+  state.step = Math.max(0, Math.min(k, f.steps.length - 1));
+  clearMarks();
+
+  /* everything this flow ever touches stays legible; the rest recedes */
+  const inFlow = {};
+  f.steps.forEach(s=>{
+    (s.n||[]).forEach(id=> inFlow[id] = true);
+    (s.e||[]).forEach(p=>{ inFlow[p[0]] = true; inFlow[p[1]] = true; });
+  });
+
+  const step = f.steps[state.step];
+  const live = {}, liveEdges = {};
+  (step.n||[]).forEach(id=> live[id] = true);
+  (step.e||[]).forEach(p=>{ live[p[0]] = true; live[p[1]] = true; liveEdges[edgeKey(p[0],p[1])] = true; });
+
+  Object.keys(nodeEls).forEach(id=>{
+    const el = nodeEls[id];
+    if (live[id]) el.classList.add("is-active");
+    else if (inFlow[id]) el.classList.add("is-inflow");
+    else el.classList.add("is-dim");
+  });
+  edgePaths.forEach(ed=>{
+    if (liveEdges[ed.el.dataset.key]) ed.el.classList.add("edge--live");
+    else ed.el.classList.add("edge--muted");
+  });
+
+  stepList.querySelectorAll(".step").forEach((li,i)=>
+    li.classList.toggle("is-on", i === state.step));
+  $("#prevBtn").disabled = state.step === 0;
+  $("#nextBtn").disabled = state.step === f.steps.length - 1;
+}
+
+function stepBy(d){
+  const f = view.flows.find(x=> x.id === state.flow);
+  if (!f) return;
+  const next = state.step + d;
+  if (next < 0 || next >= f.steps.length){ stopPlay(); return; }
+  setStep(next);
+}
+
+function stopPlay(){
+  if (state.timer){ clearInterval(state.timer); state.timer = null; }
+  const b = $("#playBtn"); if (b) b.textContent = "Play";
+}
+
+$("#prevBtn").addEventListener("click", ()=> { stopPlay(); stepBy(-1); });
+$("#nextBtn").addEventListener("click", ()=> { stopPlay(); stepBy(1); });
+$("#playBtn").addEventListener("click", function(){
+  if (state.timer){ stopPlay(); return; }
+  const f = view.flows.find(x=> x.id === state.flow);
+  if (!f) return;
+  if (state.step === f.steps.length - 1) setStep(0);
+  this.textContent = "Pause";
+  state.timer = setInterval(()=>{
+    if (state.step >= f.steps.length - 1){ stopPlay(); return; }
+    stepBy(1);
+  }, 2400);
+});
+$("#clearBtn").addEventListener("click", reset);
+
+document.addEventListener("keydown", e=>{
+  if (e.key === "Escape"){ reset(); return; }
+  if (!state.flow) return;
+  if (e.key === "ArrowRight"){ stopPlay(); stepBy(1); e.preventDefault(); }
+  if (e.key === "ArrowLeft"){ stopPlay(); stepBy(-1); e.preventDefault(); }
+});
+
+/* ─────────────────────────────────────────────────────────
+   Boot
+   ───────────────────────────────────────────────────────── */
+/* View toggle — the phase filter only applies to the signal-path dataset. */
+const viewChips = $("#viewChips");
+viewChips.querySelectorAll(".chip").forEach(chip=>{
+  chip.addEventListener("click", ()=>{
+    const next = VIEWS[chip.dataset.view];
+    if (!next || next === view) return;
+    view = next;
+    viewChips.querySelectorAll(".chip").forEach(c=>
+      c.setAttribute("aria-pressed", String(c.dataset.view === chip.dataset.view)));
+    $("#phaseRow").hidden = chip.dataset.view !== "signal";
+    buildBoard();
+    reset();
+    layout();
+  });
+});
+
+buildBoard();
+renderLegend();
+layout();
+window.addEventListener("resize", layout);
+if (window.ResizeObserver) new ResizeObserver(layout).observe(bandsEl);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(layout);
+setTimeout(layout, 200);
+})();
+</script>

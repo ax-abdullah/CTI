@@ -71,7 +71,7 @@ export class CallsController {
   @ApiOperation({ summary: 'Current presence of every agent in the tenant' })
   @UseGuards(TenantApiKeyGuard)
   @Get('v1/agents/state')
-  agentStates(@Req() req: { tenant: ResolvedTenant }) {
-    return { agents: this.presence.snapshot(req.tenant.entity.slug) };
+  async agentStates(@Req() req: { tenant: ResolvedTenant }) {
+    return { agents: await this.presence.snapshot(req.tenant.entity.slug) };
   }
 }

@@ -2,15 +2,17 @@
 
 **Knowledge & architecture document** for building a multi-tenant Computer Telephony Integration (CTI) product: click-to-call, screen pops, and automated call logging between Asterisk/FreePBX servers and CRMs (Zoho CRM, Salesforce, and any custom CRM via generic webhooks).
 
-- **Targets:** production FreePBX servers + the lab `Multi-Tenant-Asterisk-PBX` Docker project (prototyping)
+- **Targets:** production FreePBX servers + the lab `Multi-Tenant-Asterisk` Docker project (prototyping)
 - **Stack:** a dedicated **NestJS (TypeScript)** application — Redis for live call state, PostgreSQL for the tenant registry
-- **Status:** **built and validated through Phase 10** (this began as a design doc; it now doubles as the architecture explainer). For the current feature set see [docs/FEATURES.md](./docs/FEATURES.md), the design decisions in [docs/adr/](./docs/adr/README.md), setup in [docs/INSTALL.md](./docs/INSTALL.md), and the live API at `/docs`.
+- **Status:** **built and validated through Phase 12a** — the platform is horizontally scalable (§9). For the current feature set see [docs/FEATURES.md](./docs/FEATURES.md), the design decisions in [docs/adr/](./docs/adr/README.md), setup in [docs/INSTALL.md](./docs/INSTALL.md), running more than one replica in [docs/SCALING.md](./docs/SCALING.md), and the live API at `/docs`. (This began as a design doc; it now doubles as the architecture explainer.)
+- **See it whole:** [docs/architecture.html](./docs/architecture.html) is an interactive diagram of the built system — every component in this document as a clickable box, plus seven traceable call flows (inbound screen pop, click-to-call, call logging, restart resync, supervisor coaching, firewalled PBX, ARI routing). Self-contained; open it in any browser.
 
 > **As-built note.** The design below held up; a few concrete choices diverged from the original sketch and are worth flagging so this document isn't misleading:
 > - **AMI client is hand-rolled**, not `asterisk-ami-client`/`asterisk-manager` (the npm libraries are unmaintained; the protocol is ~150 lines — [ADR-0002](./docs/adr/0002-hand-rolled-ami-client.md)). It runs over any transport, which the reverse connector reuses.
 > - **CRM adapters are one module per CRM** (`ZohoModule`, `SalesforceModule`, `HubSpotModule`, `DynamicsModule`), not a single `CrmAdaptersModule` with a `CrmAdapter` interface — each follows the same dispatcher/processor/queue shape ([ADR-0006](./docs/adr/0006-crm-adapter-models.md), [ADR-0010](./docs/adr/0010-webrtc-softphone-and-crm-expansion.md)).
 > - **ORM is TypeORM** (with real migrations, not `synchronize`); **WebSockets use `ws`** (`@nestjs/platform-ws`), not socket.io; **AMI secrets/CRM tokens are AES-256-GCM** under one master key (`CryptoService`), not libsodium.
-> - **Reverse on-prem connector** (customer dials out; no inbound holes) and **recordings pulled over that tunnel** are built ([ADR-0007](./docs/adr/0007-reverse-onprem-connector.md)/[0008](./docs/adr/0008-signed-capability-urls-for-recordings.md)/[0009](./docs/adr/0009-tls-terminating-reverse-proxy-deployment.md)). **WebRTC softphone** (in-browser audio via self-hosted JsSIP) is built; real two-way audio needs a WebRTC-configured PBX. The **ARI connector** and advanced telephony (in-call coaching, queue/ACD wallboard, CRM-driven IVR) are built ([ADR-0011](./docs/adr/0011-ari-advanced-telephony.md)) — the door ADR-0001 left open; live coached audio/queues need a Stasis-configured PBX. **All roadmap phases 0–11 are complete.**
+> - **Reverse on-prem connector** (customer dials out; no inbound holes) and **recordings pulled over that tunnel** are built ([ADR-0007](./docs/adr/0007-reverse-onprem-connector.md)/[0008](./docs/adr/0008-signed-capability-urls-for-recordings.md)/[0009](./docs/adr/0009-tls-terminating-reverse-proxy-deployment.md)). **WebRTC softphone** (in-browser audio via self-hosted JsSIP) is built; real two-way audio needs a WebRTC-configured PBX. The **ARI connector** and advanced telephony (in-call coaching, queue/ACD wallboard, CRM-driven IVR) are built ([ADR-0011](./docs/adr/0011-ari-advanced-telephony.md)) — the door ADR-0001 left open. The **queue wallboard is verified live**, and note it runs on plain AMI `app_queue` events, *not* Stasis; only coached audio (registered SIP phones) and the ARI/Stasis path itself (`http.conf`/`ari.conf`) remain unexercised live.
+> - **This document described a single process until Phase 12.** It was not merely un-tuned for replicas — two replicas produced *two of every CRM record*, because each opened its own AMI socket and independently ran the §3 correlation engine. §9 covers what changed: single-writer ownership by Redis lease, a cluster event bus, and cross-pod command routing ([ADR-0012](./docs/adr/0012-single-writer-ownership-for-horizontal-scale.md)/[0013](./docs/adr/0013-cluster-event-bus-and-exactly-once-enqueue.md)). **Roadmap phases 0–11 are complete; Phase 12a is done, 12b/12c (role split, Helm/KEDA) remain.**
 
 ---
 
@@ -169,7 +171,9 @@ The lowest common denominator, and the fastest path to a demo:
 
 ## 5. Architecture — the NestJS application
 
-### 5.1 Topology
+### 5.1 Topology (logical)
+
+> This is the **logical** view — how the modules relate, drawn as a single process for clarity. It is still accurate about what talks to what. For the **deployment** view, where the platform runs as several replicas and exactly one of them drives each PBX, see [§9 Running at scale](#9-running-at-scale) and [docs/SCALING.md](./docs/SCALING.md).
 
 ```mermaid
 flowchart LR
@@ -221,6 +225,8 @@ flowchart LR
 - Adapters consume **only** the normalized events — no AMI types leak past `CallStateModule`.
 - All CRM delivery goes through **BullMQ** (Redis-backed) so a CRM outage never blocks event processing; retries + dead-letter per tenant.
 - The connector is an internal interface (direct + reverse AMI implementations today) — leaves room for an ARI connector (Phase 11) without touching anything downstream.
+
+> **The three flows below are module-level**, drawn within one process so the telephony logic stays legible. They remain accurate about the order of operations. What they do not show is *which replica* performs each step when the platform runs more than one — for that, see [§9.3](#93-an-inbound-call-with-three-replicas) and [§9.4](#94-click-to-call-from-a-replica-that-does-not-own-the-pbx).
 
 ### 5.3 Flow 1 — inbound call → screen pop
 
@@ -306,7 +312,7 @@ Recording links: FreePBX stores recordings under `/var/spool/asterisk/monitor/..
 
 ## 6. Security checklist
 
-- **AMI:** dedicated manager user per integration with **minimal `read`/`write` classes** (`read = call,cdr,dialplan`, `write = originate,call` — not `all`); `permit` ACLs pinned to the CTI's IPs; prefer TLS (5039) or VPN; never expose 5038 publicly (it's a remote-code-execution surface via `Originate`+`System` if `write=system` is granted — never grant it).
+- **AMI:** dedicated manager user per integration with **minimal `read`/`write` classes** (`read = call,cdr,dialplan,dtmf,agent`, `write = originate,call,reporting` — not `all`; `agent` on read gates the queue events, `reporting` on *write* gates the `CoreShowChannels` action behind the resync — Asterisk authorises actions against write perms, events against read perms); `permit` ACLs pinned to the CTI's IPs; prefer TLS (5039) or VPN; never expose 5038 publicly (it's a remote-code-execution surface via `Originate`+`System` if `write=system` is granted — never grant it).
 - **Secrets at rest:** PBX passwords and CRM OAuth refresh tokens encrypted (per-tenant data key, e.g. libsodium sealed boxes); never in env files per tenant.
 - **Webhooks out:** HMAC-SHA256 signature + timestamp (reject >5min skew) so customer CRMs can verify authenticity.
 - **API in:** per-tenant API keys (hashed at rest) for the generic REST; JWT sessions for softphone WebSocket auth; rate-limit `originate` (it makes phones ring — abuse vector).
@@ -319,7 +325,7 @@ Recording links: FreePBX stores recordings under `/var/spool/asterisk/monitor/..
 
 | Phase | Scope | Exit criterion |
 |---|---|---|
-| **0 — Lab prep** | Add `manager.conf` (+ expose 5038) to `LAB/Multi-Tenant-Asterisk-PBX` Docker config; create a `cti` manager user with minimal ACLs | `telnet localhost 5038` login works; events visible on a test call between 1001↔1002 |
+| **0 — Lab prep** | Add `manager.conf` (+ expose 5038) to `LAB/Multi-Tenant-Asterisk` Docker config; create a `cti` manager user with minimal ACLs | `telnet localhost 5038` login works; events visible on a test call between 1001↔1002 |
 | **1 — Core (single tenant)** | Scaffold NestJS app in `LAB/CTI/`; `PbxConnectorModule` + `CallStateModule` + normalized events; generic webhook dispatcher; `POST /v1/calls/originate` | Demo: call 1001→1002 fires signed webhooks; curl originates a call; webhook consumer shows a pop |
 | **2 — Multi-tenant + production FreePBX** | Tenant registry (PostgreSQL), encrypted creds, BullMQ delivery, `/health`, agent↔extension mapping, point at a real FreePBX | Two tenants (lab + prod FreePBX) running concurrently, isolated, with per-tenant webhooks |
 | **3 — Zoho PhoneBridge** | OAuth per org, call-notify integration, click-to-call callback endpoint, activity enrichment | Ringing pop inside Zoho; dial icon in Zoho rings the agent's phone; ended call logged |
@@ -343,3 +349,163 @@ Recording links: FreePBX stores recordings under `/var/spool/asterisk/monitor/..
 2. **Salesforce org access** — *still open (operational).* Adapter + Call Center XML built; needs a real connected app in the customer org.
 3. **CLI/CallerID policy per tenant** — resolved: the CTI presents the destination number on the agent leg and relies on the PBX's trunk rules for outbound CLI; per-tenant `originateChannelTemplate`/`originateContext` are in the registry.
 4. **Data residency** — resolved in design: Zoho DC base URLs are per-integration (`.com`/`.eu`/`.sa`), recordings never leave the CTI proxy; hosting location remains a deployment choice.
+
+---
+
+## 9. Running at scale
+
+*(Phase 12a. Rationale: [ADR-0012](./docs/adr/0012-single-writer-ownership-for-horizontal-scale.md) for ownership, [ADR-0013](./docs/adr/0013-cluster-event-bus-and-exactly-once-enqueue.md) for the event bus. Operator guide: [docs/SCALING.md](./docs/SCALING.md).)*
+
+Everything above describes one process. This section describes what changes when there are several — and it is not a tuning exercise. **Before Phase 12, two replicas produced two of every CRM record**, because each opened its own AMI socket to the same PBX and independently ran §3's correlation engine.
+
+### 9.1 The invariant
+
+**A PBX connection is driven by exactly one replica at a time.** That replica is the sole source of `call.*` events for its PBX, and the only one that enqueues delivery. Everything else in this section follows from that sentence.
+
+Ownership is a Redis lease: a key holding the pod's identity under a 30s TTL, renewed every 10s, released on `SIGTERM`, with renewal and release as Lua compare-and-swap against the pod id. A process away longer than the TTL can never reclaim ownership someone else has taken.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Unowned
+    Unowned --> Owned : SET NX wins (direct mode)
+    Unowned --> Owned : force-claim (reverse tunnel lands here)
+    Owned --> Owned : compare-and-renew every 10s
+    Owned --> Unowned : released on SIGTERM
+    Owned --> Unowned : pod died — TTL expires (≤30s)
+    Owned --> StoodDown : renew returns 0 — someone else took it
+    StoodDown --> [*] : connection stopped immediately
+```
+
+The two connection modes claim ownership differently, and must:
+
+- **`direct`** — lease-first. Any replica can dial the PBX, so first `SET NX` wins.
+- **`reverse`** — **tunnel-first.** The customer's connector agent dials out and lands wherever the load balancer puts it. That replica force-claims, because the connection can only be served where the socket physically is; the previous holder has no tunnel and stands down.
+
+### 9.2 Why a second mechanism was needed
+
+Ownership alone is not sufficient, and this is the part that surprises people.
+
+Once a single replica owns a connection, the pod holding an agent's WebSocket is almost never the pod that derived the event — so `call.*` must be mirrored to every replica over Redis pub/sub, or screen pops stop. But mirroring means every replica's dispatchers see the event again. **Measured live, with ownership already working and only one AMI socket: two delivery jobs per event.**
+
+So there are two rules, not one:
+
+| Rule | Enforced by |
+|---|---|
+| Only one replica may **derive** an event | Redis lease |
+| Only the deriving replica may **enqueue** delivery | `Symbol` marker on mirrored payloads, checked by all five dispatchers |
+
+### 9.3 An inbound call with three replicas
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant PBX as Asterisk
+    participant A as replica A (owner)
+    participant R as Redis
+    participant B as replica B
+    participant Q as BullMQ worker
+    participant CRM as Zoho / Salesforce
+
+    PBX->>A: AMI Newchannel + DialBegin (Linkedid L1)
+    A->>A: correlate L1 → tenant, agentExt
+    A->>R: persist call state (write-through)
+    A-->>A: emit call.ringing
+
+    par derived here — enqueues
+        A->>Q: one delivery job per enabled integration
+        Q->>CRM: screen pop
+    and mirrored — must not enqueue
+        A->>R: PUBLISH cti:bus
+        R->>B: call.ringing (tagged)
+        B->>B: dispatcher sees tag → skips
+        B-->>B: gateway pushes to its agent sockets
+    end
+
+    PBX->>A: Hangup
+    A->>R: SET NX finalize claim
+    R-->>A: OK (first and only claimant)
+    A-->>A: emit call.ended → one CRM record
+```
+
+`call.ended` takes its own `SET NX` claim because a lease handover can briefly leave two replicas holding the same call — the outgoing owner mid-hangup and the incoming one having hydrated it from Redis. The claim is a *separate* key rather than "did our `DEL` remove the snapshot": persistence is fire-and-forget, so a snapshot that had not landed yet would make `DEL` report 0 and silently swallow a real call log.
+
+### 9.4 Click-to-call from a replica that does not own the PBX
+
+The request lands wherever the load balancer put it. For a reverse connection the socket is pinned to whichever replica the customer's agent dialled into, so the command has to travel.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as Agent browser / CRM
+    participant B as replica B (no lease)
+    participant R as Redis
+    participant A as replica A (owner)
+    participant PBX as Asterisk
+
+    U->>B: POST /v1/calls/originate
+    B->>B: auth, tenant scope, rate limit
+    B->>R: PUBLISH cti:rpc:req {correlationId, connectionId}
+    R->>A: request
+    Note over A: every connector sees it —<br/>only the lease holder acts
+    A->>PBX: AMI Originate (CTI_CALL_REF)
+    PBX-->>A: Response: Success
+    A->>R: PUBLISH cti:rpc:reply:{podB}
+    R-->>B: {callRef}
+    B-->>U: 200 {callRef}
+```
+
+The RPC timeout (15s) is deliberately longer than the AMI action timeout (10s) so the PBX's own error text propagates rather than a generic "no reply".
+
+### 9.5 A reverse tunnel landing on the "wrong" replica
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant AG as On-prem connector agent
+    participant LB as Ingress
+    participant B as replica B
+    participant R as Redis
+    participant A as replica A (previous holder)
+
+    Note over A: holds the lease, but has no tunnel —<br/>connection is passive, connected=false
+    AG->>LB: wss /connector-ws (outbound only)
+    LB->>B: lands here
+    B->>B: authenticate connector token
+    B->>R: force-claim lease (SET, no NX)
+    B->>B: start connection, attach tunnel, AMI login
+    A->>R: renew → returns 0
+    A->>A: stand down, stop connection
+    Note over B: now the sole owner —<br/>originate, coaching and recordings route here
+```
+
+### 9.6 What is shared
+
+| State | Key | Purpose |
+|---|---|---|
+| Ownership | `cti:lease:{ami\|files}:{connectionId}` | the exclusivity guarantee |
+| Call state | `call:{connectionId}:{callId}` (6h) | `GET /v1/calls` correct cluster-wide, survives restart |
+| Finalize claim | `cti:finalized:{connectionId}:{callId}` (5m) | `call.ended` exactly once |
+| Presence | `cti:presence:{tenantSlug}` hash (24h) | same answer on every replica |
+| Queue stats | `cti:qstats:{connectionId}:{queue}` (24h) | wallboard survives a handover |
+
+Two sockets are leased separately (`ami`, `files`) because a connector agent opens `/connector-ws` and `/connector-files` independently and they can land on different replicas.
+
+**Redis becomes a correctness dependency, not a cache** — leases live there. It must be HA before production. That is the real cost of this design.
+
+### 9.7 Scaling signals (12b/12c)
+
+The three concerns scale on different signals, which is why the next phase splits them into separate workloads (`CTI_ROLE=api|connector|worker`) rather than adding identical replicas.
+
+```mermaid
+flowchart LR
+    Q["BullMQ queue depth<br/>bull:{queue}:wait"] --> W["worker replicas<br/>CRM delivery"]
+    WS["WebSocket count<br/>cti_softphone_clients"] --> AP["api replicas<br/>HTTP + agent sockets"]
+    CPU["CPU / event-loop lag"] --> AP
+    INV["PBX inventory<br/>count(pbx_connections)"] --> CO["connector replicas<br/>AMI/ARI sockets"]
+
+    style CO fill:none,stroke-dasharray: 4 4
+```
+
+Note the asymmetry: **connectors scale with inventory, not load.** A PBX has a fixed number of AMI sessions worth opening, so adding connector replicas under call load would be useless at best. Only `api` and `worker` are demand-driven.
+
+Until 12b lands, scale by adding identical replicas — correct, just not independently scalable.

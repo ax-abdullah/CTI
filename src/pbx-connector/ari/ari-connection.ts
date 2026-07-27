@@ -28,7 +28,11 @@ interface AriCall {
  * as the AMI path, so nothing downstream changes; on StasisStart it also runs
  * the CRM-driven IVR routing decision. Exposes its AriClient for supervisor
  * coaching (snoop). One driver='ari' connection is served by exactly one
- * instance, so it is the sole event source for its calls (no AMI double-emit).
+ * instance, so it is the sole event source for its calls (no AMI double-emit)
+ * — enforced since Phase 12 by the Redis lease AriSupervisorService holds
+ * before starting a connection (ADR-0012). This matters more here than for
+ * AMI: the handlers below answer channels, set variables and continue the
+ * dialplan, so a second instance would run that control flow on a live call.
  */
 export class AriConnection {
   private readonly logger: Logger;

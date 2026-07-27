@@ -99,9 +99,19 @@ export class SupervisedConnection {
   }
 
   /** Used by the supervisor's hot-reload diff. */
-  fingerprint(): string {
-    const { connectionId, name, mode, host, port, username, secret } = this.target;
+  /**
+   * Config identity, so a reload can tell "same connection, still running"
+   * from "changed, needs restarting". Static too, because the supervisor
+   * compares a desired target against a live connection before deciding
+   * whether to build one.
+   */
+  static fingerprintOf(target: ConnectionTarget): string {
+    const { connectionId, name, mode, host, port, username, secret } = target;
     return JSON.stringify([connectionId, name, mode, host, port, username, secret]);
+  }
+
+  fingerprint(): string {
+    return SupervisedConnection.fingerprintOf(this.target);
   }
 
   private buildClient(extra: { stream?: Duplex } = {}): AmiClient {

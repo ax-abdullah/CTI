@@ -12,8 +12,13 @@ class MockAmi {
   private sockets = new Set<Socket>();
   port!: number;
 
-  async start(opts: { acceptLogin?: boolean } = {}): Promise<void> {
+  /** When set, CoreShowChannels is answered the way a manager user without
+   *  the `reporting` read class is answered by a real Asterisk. */
+  denyCoreShowChannels = false;
+
+  async start(opts: { acceptLogin?: boolean; denyCoreShowChannels?: boolean } = {}): Promise<void> {
     const acceptLogin = opts.acceptLogin ?? true;
+    this.denyCoreShowChannels = opts.denyCoreShowChannels ?? false;
     this.server = createServer((socket) => {
       this.sockets.add(socket);
       socket.write('Asterisk Call Manager/7.0.1\r\n');
@@ -47,6 +52,9 @@ class MockAmi {
       );
     } else if (fields.Action === 'Ping') {
       socket.write(`Response: Success\r\nActionID: ${actionId}\r\nPing: Pong\r\n\r\n`);
+    } else if (fields.Action === 'CoreShowChannels' && this.denyCoreShowChannels) {
+      // Asterisk echoes the ActionID on the denial and sends nothing further.
+      socket.write(`Response: Error\r\nActionID: ${actionId}\r\nMessage: Permission denied\r\n\r\n`);
     } else if (fields.Action === 'CoreShowChannels') {
       // Response, then a stream of CoreShowChannel events, then Complete.
       socket.write(`Response: Success\r\nActionID: ${actionId}\r\nEventList: start\r\nMessage: Channels will follow\r\n\r\n`);
@@ -131,6 +139,29 @@ describe('AmiClient (integration)', () => {
     expect(channels).toHaveLength(2);
     expect(channels.every((c) => c.Event === 'CoreShowChannel')).toBe(true);
     expect(channels[0].Linkedid).toBe('01');
+    client.destroy();
+  });
+
+  it('fails a multi-event action fast when the manager user lacks the privilege', async () => {
+    mock = new MockAmi();
+    await mock.start({ denyCoreShowChannels: true });
+    const client = new AmiClient({
+      host: '127.0.0.1',
+      port: mock.port,
+      username: 'cti',
+      secret: 's',
+      actionTimeoutMs: 5_000,
+    });
+    await client.connect();
+
+    // The denial must surface as its own message, well inside the timeout —
+    // a real `cti` user without the `reporting` class used to hang for the
+    // full actionTimeoutMs because the Error frame matched no pending action.
+    const started = Date.now();
+    await expect(
+      client.sendEventAction({ Action: 'CoreShowChannels' }, 'CoreShowChannelsComplete'),
+    ).rejects.toThrow(/CoreShowChannels failed: Permission denied/);
+    expect(Date.now() - started).toBeLessThan(1_000);
     client.destroy();
   });
 

@@ -1,6 +1,6 @@
 # Feature Catalog
 
-Every feature of the CTI platform, what it does, how it works, and how to use it. API details: Swagger at `/docs`; request examples: `docs/postman/`. Design rationale: `docs/adr/`.
+Every feature of the CTI platform, what it does, how it works, and how to use it. API details: Swagger at `/docs`; request examples: `docs/postman/`. Design rationale: `docs/adr/`. Visual map of how these features fit together: [architecture.html](./architecture.html).
 
 ## At a glance
 
@@ -23,7 +23,8 @@ Every feature of the CTI platform, what it does, how it works, and how to use it
 | 15 | [WebRTC softphone](#15-webrtc-softphone-phase-10) | in-browser audio via self-hosted JsSIP | Phase 10 |
 | 16 | [HubSpot & Dynamics adapters](#16-hubspot--dynamics-adapters-phase-10) | Call engagement / phonecall activity | Phase 10 |
 | 17 | [Advanced telephony (ARI)](#17-advanced-telephony-ari--phase-11) | coaching, queue wallboard, CRM-driven IVR | Phase 11 |
-| 18 | [Security model](#18-security-model) | cross-cutting | all |
+| 18 | [Horizontal scale](#18-horizontal-scale--phase-12a) | run N replicas safely; `GET /admin/cluster` | Phase 12a |
+| 19 | [Security model](#19-security-model) | cross-cutting | all |
 
 ---
 
@@ -152,8 +153,22 @@ Beyond observe + originate, on PBXs you control ([ADR-0011](./adr/0011-ari-advan
 - **Queue/ACD wallboard** — `GET /v1/queues` (tenant key) and a `queue.stats` stream on the softphone WebSocket: waiting callers, answered/abandoned, avg hold/talk, available members — aggregated from `app_queue` events.
 - **CRM-driven IVR** — on an inbound Stasis call, the caller is looked up and `RoutingService` decides priority/queue/prompt and sets channel variables before handing the call back to the dialplan.
 
-## 18. Security model
+## 18. Horizontal scale — Phase 12a
 
-- AMI users scoped to `read=call,cdr,dialplan,dtmf` / `write=call,originate`; never `write=system`; 5038 never public.
+Run more than one replica without duplicating CRM records. Full operator guide: [SCALING.md](./SCALING.md); rationale: [ADR-0012](./adr/0012-single-writer-ownership-for-horizontal-scale.md) and [ADR-0013](./adr/0013-cluster-event-bus-and-exactly-once-enqueue.md).
+
+- **Single-writer ownership** — a PBX connection is driven by exactly one replica, held as a Redis lease (`cti:lease:{ami|files}:{connectionId}`, 30s TTL, renewed every 10s, released on `SIGTERM`). Losing a lease stops that connection at once. `direct` connections are claimed lease-first; `reverse` are **tunnel-first**, since the connection can only be served where the customer's connector agent landed.
+- **Cluster event bus** — `call.*`, `agent.*` and `queue.*` are mirrored over Redis pub/sub and re-emitted on every replica, so an agent's screen pop arrives whichever replica holds their WebSocket. Raw `ami.event` deliberately stays local to the owning pod.
+- **Exactly-once delivery** — only the replica that *derived* an event enqueues it (mirrored copies carry a marker every dispatcher skips), and `call.ended` additionally takes a `SET NX` claim so a lease handover cannot double-log a call.
+- **Cross-pod commands** — click-to-call, coaching, `CoreShowChannels` and recording fetches are routed over Redis request/reply to whichever replica holds the socket. This is what makes click-to-call work on a replica that is not holding a customer's reverse tunnel.
+- **Shared state** — call state, agent presence (`GET /v1/agents/state`) and queue stats (`GET /v1/queues`) all live in Redis, so every replica answers identically. Queue counters now also survive a handover instead of resetting to zero.
+- **Registry fan-out** — `POST /admin/reload` broadcasts to every replica, so a new tenant or rotated API key takes effect everywhere rather than on the one pod that received the request.
+- **`GET /admin/cluster`** (admin key) — which replica owns each connection, with lease expiry. The first thing to check when a connection looks down: usually it is simply owned elsewhere.
+
+> Redis is now a **correctness dependency**, not a cache — the leases live there. Run it HA before production.
+
+## 19. Security model
+
+- AMI users scoped to `read=call,cdr,dialplan,dtmf,agent` / `write=call,originate,reporting`; never `system` on write; 5038 never public. (`agent` on read carries the queue events the wallboard needs; `reporting` on **write** is what the `CoreShowChannels` action — the restart resync — requires, because Asterisk authorises actions against write perms and events against read perms.)
 - Secrets at rest: AES-256-GCM under `CREDS_KEY`; keys/tokens hashed (sha256) with one-time disclosure.
 - All key comparisons are constant-time. Webhooks signed (HMAC + timestamp). Recordings via expiring capability URLs. Four separate auth realms: tenant API key, agent token, admin key, connector/callback tokens.

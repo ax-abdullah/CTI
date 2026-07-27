@@ -17,6 +17,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Repository } from 'typeorm';
 import { CallStateService } from '../call-state/call-state.service';
+import { ClusterBusService, CLUSTER_EVENTS } from '../cluster/cluster-bus.service';
+import { LeaseService } from '../cluster/lease.service';
 import { PbxSupervisorService } from '../pbx-connector/pbx-supervisor.service';
 import { AriSupervisorService } from '../pbx-connector/ari/ari-supervisor.service';
 import { CryptoService } from '../tenants/crypto.service';
@@ -48,6 +50,8 @@ export class AdminController {
     private readonly ariSupervisor: AriSupervisorService,
     private readonly callState: CallStateService,
     private readonly crypto: CryptoService,
+    private readonly clusterBus: ClusterBusService,
+    private readonly leases: LeaseService,
     @InjectRepository(PbxConnection) private readonly connectionRepo: Repository<PbxConnection>,
     @InjectRepository(Tenant) private readonly tenantRepo: Repository<Tenant>,
     @InjectRepository(Agent) private readonly agentRepo: Repository<Agent>,
@@ -95,16 +99,37 @@ export class AdminController {
 
   /** Reloads the registry from the DB and re-diffs PBX connections. */
   @ApiOperation({
-    summary: 'Hot-reload the registry',
-    description: 'Re-reads tenants/connections/integrations from the DB; only changed PBX connections restart.',
+    summary: 'Hot-reload the registry on every replica',
+    description:
+      'Re-reads tenants/connections/integrations from the DB; only changed PBX connections restart. ' +
+      'Broadcast over the cluster bus, so a new tenant or rotated API key reaches every pod — not just the ' +
+      'one this request happened to land on.',
   })
   @UseGuards(AdminKeyGuard)
   @Post('reload')
-  async reload() {
-    await this.registry.onModuleInit();
-    this.supervisor.reload();
-    this.ariSupervisor.reload();
-    return { status: 'reloaded' };
+  reload() {
+    // Fire-and-forget across the cluster: this pod handles it through the
+    // same listener as its peers, so there is one code path, not two.
+    this.clusterBus.broadcast(CLUSTER_EVENTS.registryReload);
+    return { status: 'reload-broadcast' };
+  }
+
+  @ApiOperation({
+    summary: 'Cluster ownership map',
+    description:
+      'Which pod holds the lease for each PBX connection, and how long it has left. The first thing to check ' +
+      'when a connection looks down: it may simply be owned by another replica.',
+  })
+  @UseGuards(AdminKeyGuard)
+  @Get('cluster')
+  async cluster() {
+    const leases = await this.leases.ownership();
+    return {
+      thisPod: this.leases.podId,
+      // Connections this pod is actually driving; the rest belong to peers.
+      owned: this.supervisor.statuses(),
+      leases,
+    };
   }
 
   private queueByName(name: string): Queue | undefined {

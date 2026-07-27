@@ -39,7 +39,7 @@ Build, provision the schema (migrations own it — no `synchronize`), and run th
 ```bash
 npm run build
 npm run migration:run   # creates/updates the schema on a clean or existing DB
-npm test                # 60 unit + integration tests, no live infra needed
+npm test                # 76 unit + integration tests, no live infra needed
 ```
 
 ## 4. Prepare the PBX (AMI)
@@ -55,19 +55,35 @@ Create a dedicated manager user in `/etc/asterisk/manager_custom.conf`:
 secret = <openssl rand -hex 16>
 deny = 0.0.0.0/0.0.0.0
 permit = <CTI-or-agent-IP>/255.255.255.255
-read = call,cdr,dialplan,dtmf
-write = call,originate
+read = call,cdr,dialplan,dtmf,agent
+write = call,originate,reporting
 writetimeout = 5000
 ```
 
-Then `fwconsole reload`. Grant only these classes — in particular **never `write = system`** (it allows remote command execution through AMI).
+Then `fwconsole reload`. Grant only these classes — in particular **never `system` on `write`** (it allows remote command execution through AMI).
+
+Two of these are easy to miss, and omitting them breaks a feature silently rather than loudly:
+
+| Class | Where | Without it |
+|---|---|---|
+| `agent` | `read` | No `QueueCallerJoin` / `QueueCallerLeave` / `QueueCallerAbandon` / `AgentConnect` / `AgentComplete` events reach the CTI, so the queue wallboard (`GET /v1/queues`) stays empty |
+| `reporting` | **`write`** | `CoreShowChannels` returns *Permission denied*, so the restart resync ([ADR-0003](./adr/0003-linkedid-correlation-normalized-events.md)) cannot ask the PBX what is live — calls in flight across a restart are never reconciled |
+
+`reporting` on **write** is not a typo. Asterisk authorises *actions* against the user's **write** perms, and *events* against **read** perms — so an action whose documented privilege is `system,reporting,all` needs one of those on the write side. Putting `reporting` (or even `system`) on `read` does not help; verified against Asterisk 20 with the checks below. It grants no write capability of its own.
+
+Verify effective grants and requirements directly on the PBX:
+
+```bash
+asterisk -rx "manager show user cti"                    # read perm / write perm
+asterisk -rx "manager show command CoreShowChannels"    # → Privilege: system,reporting,all
+```
 
 ### 4b. Lab Asterisk (this repo's sibling project)
 
-`../Multi-Tenant-Asterisk-PBX` already ships `config/manager.conf` with a `cti` user and maps 5038 to host loopback:
+`../Multi-Tenant-Asterisk` already ships `config/manager.conf` with a `cti` user and maps 5038 to host loopback:
 
 ```bash
-cd ../Multi-Tenant-Asterisk-PBX && docker compose up -d
+cd ../Multi-Tenant-Asterisk && docker compose up -d
 printf 'Action: Login\r\nUsername: cti\r\nSecret: <secret>\r\n\r\n' | nc -w 3 127.0.0.1 5038
 # → Response: Success
 ```
@@ -105,7 +121,7 @@ curl -s http://127.0.0.1:3000/health   # → {"status":"ok","connections":[{...,
 
 Point `RECORDINGS_BASE_DIR` at a directory containing the PBX's MixMonitor output:
 
-- **Direct connections:** the CTI reads a mount/sync of the monitor dir. Lab: the compose bind-mounts it to `../Multi-Tenant-Asterisk-PBX/recordings`; production: mount/sync `/var/spool/asterisk/monitor` (NFS, rsync, object storage).
+- **Direct connections:** the CTI reads a mount/sync of the monitor dir. Lab: the compose bind-mounts it to `../Multi-Tenant-Asterisk/recordings`; production: mount/sync `/var/spool/asterisk/monitor` (NFS, rsync, object storage).
 - **Reverse connections:** no mount needed — set `AGENT_RECORDINGS_DIR` on the connector agent (§8) and the CTI pulls each file from the on-prem agent over the tunnel on demand.
 
 `call.ended` events then carry `recordingUrl` — a 15-minute signed link served by the CTI; the PBX filesystem is never exposed.
@@ -154,7 +170,7 @@ All four CRM adapters store non-secret config + encrypted secrets on a `CrmInteg
 
 Lets agents take audio in the browser instead of a desk phone.
 
-1. **PBX:** enable a PJSIP WebRTC transport (wss + DTLS-SRTP) and per-agent webrtc endpoints — reference config in `../Multi-Tenant-Asterisk-PBX/config/webrtc.conf` (needs `res_http_websocket`, HTTP/TLS on 8089, and a DTLS cert).
+1. **PBX:** enable a PJSIP WebRTC transport (wss + DTLS-SRTP) and per-agent webrtc endpoints — reference config in `../Multi-Tenant-Asterisk/config/webrtc.conf` (needs `res_http_websocket`, HTTP/TLS on 8089, and a DTLS cert).
 2. **CTI env:** set `WEBRTC_WSS_URL` (e.g. `wss://pbx.example.com:8089/ws`), `WEBRTC_SIP_DOMAIN`, and optionally `WEBRTC_STUN_URL`.
 3. **Agents:** give each agent SIP credentials (`sipUsername`/`sipPassword`) matching its PBX endpoint — seeded in the lab as `webrtc-<ext>`; set via the registry in production.
 4. The softphone page ([public/softphone.html](../public/softphone.html)) then offers **Enable browser audio** → it fetches `GET /v1/softphone/webrtc-config`, registers via self-hosted JsSIP, and places/receives calls with real audio. Without this, the softphone falls back to desk-phone click-to-call.
@@ -188,6 +204,42 @@ The mock servers (`scripts/mock-*.mjs`) prove the contract; going live needs the
 - **Queue wallboard**: define Asterisk queues; `GET /v1/queues` and the `queue.stats` WebSocket stream then populate.
 - **ARI connector + CRM-driven IVR** (PBXs you control): enable Asterisk's HTTP server + ARI (`http.conf`: `enabled=yes`; `ari.conf`: an ARI user), point an inbound dialplan context at `Stasis(<app>)`, then register a `driver:"ari"` PBX connection (`host:port` = ARI HTTP, `username`/`secret` = the ARI user, `ariApp` = `<app>`). Calls entering Stasis emit the normal `call.*` events and get looked-up + routed. `GET /health/ari` shows status. See [ADR-0011](./adr/0011-ari-advanced-telephony.md).
 
+## 14. Running more than one replica (Phase 12a)
+
+Safe from Phase 12a onward, and **only** from Phase 12a onward — on an earlier build two replicas duplicate every CRM write. Full operator guide: [SCALING.md](./SCALING.md).
+
+Nothing special is required to scale out: give every replica the **identical environment** and start more of them. They coordinate through Redis.
+
+```bash
+# same env, different ports/hosts — they find each other via Redis
+POD_ID=cti-1 PORT=3000 npm start
+POD_ID=cti-2 PORT=3002 npm start
+```
+
+**Prerequisites, both non-negotiable:**
+
+1. **All replicas share one Redis and one PostgreSQL.** A replica pointed at a different Redis is a silently split cluster: its agents get no events from elsewhere, and because it sees no leases it will duplicate CRM writes.
+2. **Redis is HA.** It now holds the ownership leases, so it is a correctness dependency rather than a cache. Sentinel or a managed service.
+
+Optional tuning (defaults are sensible — see `.env.example`):
+
+| Variable | Default | Effect |
+|---|---|---|
+| `POD_ID` | hostname + random suffix | lease identity; the suffix keeps a restarted pod distinct from its predecessor |
+| `LEASE_TTL_MS` | `30000` | how long a crashed replica's connections stay orphaned |
+| `LEASE_RENEW_MS` | `10000` | renewal cadence; keep well below the TTL or connections flap |
+| `CLUSTER_RPC_TIMEOUT_MS` | `15000` | cross-replica command timeout |
+
+Verify it took:
+
+```bash
+curl -s -H "X-Admin-Key: $ADMIN_API_KEY" http://127.0.0.1:3000/admin/cluster
+```
+
+Exactly one replica should list a given connection under `owned`; the `leases` array shows the same ownership from every replica's point of view. A replica with `owned: []` is normal and healthy.
+
+> **Don't use `GET /health` as a Kubernetes probe.** It reports only the connections *this* replica owns, so a replica holding none reports `degraded` — and it always returns HTTP 200 regardless. Use `/health/ready` (Postgres + Redis, returns 503 on failure) for readiness and `/health/live` for liveness.
+
 ## 12. Production checklist
 
 - [x] TLS/WSS terminated by a reverse proxy (Caddy); connector agents dial `wss://`
@@ -197,3 +249,4 @@ The mock servers (`scripts/mock-*.mjs`) prove the contract; going live needs the
 - [ ] Real Zoho/Salesforce orgs instead of the `scripts/mock-*.mjs` servers (§11)
 - [ ] Secrets from a manager/KMS; rotate `ADMIN_API_KEY`; `.env` out of git (already ignored)
 - [ ] Point Prometheus at `/metrics` and wire Alertmanager to the `failed`/`connection_down` series (or the structured `alert` logs)
+- [ ] If running >1 replica: Redis is **HA** (it holds the ownership leases), every replica shares the same Redis + Postgres, and `/health/ready` — not `/health` — is wired to the readiness probe (§14)

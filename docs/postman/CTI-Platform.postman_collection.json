@@ -1,34 +1,78 @@
 {
   "info": {
     "name": "CTI Platform",
-    "description": "Multi-tenant CTI middleware (Asterisk/FreePBX <-> CRM): click-to-call, screen pops, automated call logging, presence, recordings, WebRTC softphone, observability, admin.\n\n## Setup\nSet the collection variables (right-click collection -> Edit -> Variables):\n- `baseUrl` — e.g. http://127.0.0.1:3000 (or https://localhost:8443 behind Caddy)\n- `tenantApiKey` / `tenantBApiKey` — printed once by `npm run seed`\n- `adminApiKey` — ADMIN_API_KEY from .env\n- `agentToken` — copy from the `Softphone / Agent login` response\n- `zohoCallbackToken` — the Zoho integration's callback token (lab: zoho-callback-token-a)\n\n## Auth realms\n- Tenant API: header `X-API-Key`\n- Softphone: `Authorization: Bearer <agentToken>`\n- Zoho callback: header `X-Zoho-Token`\n- Admin: header `X-Admin-Key`\n- Recordings: the signed token IS the auth (no header)\n\n## Not HTTP (use a WS client)\n- `WS {{baseUrl}}/softphone-ws?token=<agentToken>` — the agent's call.* + agent.state stream\n- `WS {{baseUrl}}/connector-ws?token=<connectorToken>` — reverse on-prem AMI tunnel\n- `WS {{baseUrl}}/connector-files?token=<connectorToken>` — reverse recording file channel\n\n## Webhooks OUT\nSigned POSTs: `X-CTI-Timestamp` (epoch ms) + `X-CTI-Signature` = hex HMAC-SHA256(secret, `${timestamp}.${rawBody}`).",
+    "description": "Multi-tenant CTI middleware (Asterisk/FreePBX <-> CRM): click-to-call, screen pops, automated call logging, presence, recordings, WebRTC softphone, observability, admin.\n\n## Setup\nSet the collection variables (right-click collection -> Edit -> Variables):\n- `baseUrl` \u2014 e.g. http://127.0.0.1:3000 (or https://localhost:8443 behind Caddy)\n- `tenantApiKey` / `tenantBApiKey` \u2014 printed once by `npm run seed`\n- `adminApiKey` \u2014 ADMIN_API_KEY from .env\n- `agentToken` \u2014 copy from the `Softphone / Agent login` response\n- `zohoCallbackToken` \u2014 the Zoho integration's callback token (lab: zoho-callback-token-a)\n\n## Auth realms\n- Tenant API: header `X-API-Key`\n- Softphone: `Authorization: Bearer <agentToken>`\n- Zoho callback: header `X-Zoho-Token`\n- Admin: header `X-Admin-Key`\n- Recordings: the signed token IS the auth (no header)\n\n## Not HTTP (use a WS client)\n- `WS {{baseUrl}}/softphone-ws?token=<agentToken>` \u2014 the agent's call.* + agent.state stream\n- `WS {{baseUrl}}/connector-ws?token=<connectorToken>` \u2014 reverse on-prem AMI tunnel\n- `WS {{baseUrl}}/connector-files?token=<connectorToken>` \u2014 reverse recording file channel\n\n## Webhooks OUT\nSigned POSTs: `X-CTI-Timestamp` (epoch ms) + `X-CTI-Signature` = hex HMAC-SHA256(secret, `${timestamp}.${rawBody}`).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "baseUrl", "value": "http://127.0.0.1:3000" },
-    { "key": "tenantApiKey", "value": "tenant-a-REPLACE" },
-    { "key": "tenantBApiKey", "value": "tenant-b-REPLACE" },
-    { "key": "adminApiKey", "value": "admin-REPLACE" },
-    { "key": "agentToken", "value": "REPLACE-from-softphone-login" },
-    { "key": "zohoCallbackToken", "value": "zoho-callback-token-a" }
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:3000"
+    },
+    {
+      "key": "tenantApiKey",
+      "value": "tenant-a-REPLACE"
+    },
+    {
+      "key": "tenantBApiKey",
+      "value": "tenant-b-REPLACE"
+    },
+    {
+      "key": "adminApiKey",
+      "value": "admin-REPLACE"
+    },
+    {
+      "key": "agentToken",
+      "value": "REPLACE-from-softphone-login"
+    },
+    {
+      "key": "zohoCallbackToken",
+      "value": "zoho-callback-token-a"
+    }
   ],
   "item": [
     {
       "name": "Health & Ops",
       "item": [
         {
-          "name": "Health — PBX connection state",
+          "name": "Health \u2014 PBX connection state",
           "request": {
             "method": "GET",
-            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] },
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
             "description": "No auth. Human-facing. `ok` when every PBX connection is up, `degraded` otherwise."
           },
           "response": [
             {
               "name": "ok",
-              "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] } },
-              "status": "OK", "code": 200, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "originalRequest": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/health",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "health"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{\n  \"status\": \"ok\",\n  \"connections\": [\n    { \"connectionId\": \"3c13605d-...\", \"name\": \"lab-asterisk\", \"mode\": \"direct\", \"connected\": true }\n  ]\n}"
             }
           ]
@@ -37,14 +81,43 @@
           "name": "Liveness probe",
           "request": {
             "method": "GET",
-            "url": { "raw": "{{baseUrl}}/health/live", "host": ["{{baseUrl}}"], "path": ["health", "live"] },
+            "url": {
+              "raw": "{{baseUrl}}/health/live",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health",
+                "live"
+              ]
+            },
             "description": "Orchestrator liveness. 200 whenever the process serves."
           },
           "response": [
             {
-              "name": "live", "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/health/live", "host": ["{{baseUrl}}"], "path": ["health", "live"] } },
-              "status": "OK", "code": 200, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "live",
+              "originalRequest": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/health/live",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "health",
+                    "live"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{ \"status\": \"live\" }"
             }
           ]
@@ -53,14 +126,43 @@
           "name": "Readiness probe",
           "request": {
             "method": "GET",
-            "url": { "raw": "{{baseUrl}}/health/ready", "host": ["{{baseUrl}}"], "path": ["health", "ready"] },
+            "url": {
+              "raw": "{{baseUrl}}/health/ready",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health",
+                "ready"
+              ]
+            },
             "description": "Readiness: Postgres + Redis reachable. 200 ready, 503 not-ready. PBX-down does NOT fail readiness."
           },
           "response": [
             {
-              "name": "ready", "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/health/ready", "host": ["{{baseUrl}}"], "path": ["health", "ready"] } },
-              "status": "OK", "code": 200, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "ready",
+              "originalRequest": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/health/ready",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "health",
+                    "ready"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{ \"status\": \"ready\", \"checks\": { \"postgres\": true, \"redis\": true } }"
             }
           ]
@@ -69,14 +171,41 @@
           "name": "Prometheus metrics",
           "request": {
             "method": "GET",
-            "url": { "raw": "{{baseUrl}}/metrics", "host": ["{{baseUrl}}"], "path": ["metrics"] },
+            "url": {
+              "raw": "{{baseUrl}}/metrics",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "metrics"
+              ]
+            },
             "description": "Prometheus text exposition. cti_calls_total, cti_call_events_total, cti_originate_total/_duration_seconds, cti_pbx_connection_up, cti_queue_jobs (all 5 delivery queues), + default Node metrics."
           },
           "response": [
             {
-              "name": "sample", "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/metrics", "host": ["{{baseUrl}}"], "path": ["metrics"] } },
-              "status": "OK", "code": 200, "_postman_previewlanguage": "text",
-              "header": [{ "key": "Content-Type", "value": "text/plain; version=0.0.4; charset=utf-8" }],
+              "name": "sample",
+              "originalRequest": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/metrics",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "metrics"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "text",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "text/plain; version=0.0.4; charset=utf-8"
+                }
+              ],
               "body": "cti_pbx_connection_up{connection=\"lab-asterisk\",mode=\"direct\"} 1\ncti_calls_total{tenant=\"tenant-a\",direction=\"outbound\",disposition=\"ANSWERED\"} 1\ncti_queue_jobs{queue=\"hubspot\",state=\"completed\"} 1"
             }
           ]
@@ -85,14 +214,43 @@
           "name": "ARI (Stasis) connection status",
           "request": {
             "method": "GET",
-            "url": { "raw": "{{baseUrl}}/health/ari", "host": ["{{baseUrl}}"], "path": ["health", "ari"] },
+            "url": {
+              "raw": "{{baseUrl}}/health/ari",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health",
+                "ari"
+              ]
+            },
             "description": "Status of driver='ari' connections (empty unless an ARI PBX connection is registered)."
           },
           "response": [
             {
-              "name": "no ARI connections", "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/health/ari", "host": ["{{baseUrl}}"], "path": ["health", "ari"] } },
-              "status": "OK", "code": 200, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "no ARI connections",
+              "originalRequest": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/health/ari",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "health",
+                    "ari"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{ \"connections\": [] }"
             }
           ]
@@ -107,24 +265,85 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-API-Key", "value": "{{tenantApiKey}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-Key",
+                "value": "{{tenantApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"supervisorExt\": \"1002\",\n  \"agentExt\": \"1001\",\n  \"mode\": \"whisper\"\n}" },
-            "url": { "raw": "{{baseUrl}}/v1/supervisor/monitor", "host": ["{{baseUrl}}"], "path": ["v1", "supervisor", "monitor"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"supervisorExt\": \"1002\",\n  \"agentExt\": \"1001\",\n  \"mode\": \"whisper\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/supervisor/monitor",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "supervisor",
+                "monitor"
+              ]
+            },
             "description": "mode: spy (listen) | whisper (talk to the agent only) | barge (join). Rings the supervisor, then joins the agent's live call. Both extensions must belong to the tenant. Optional agentChannelId for ARI snoop."
           },
           "response": [
             {
-              "name": "Coaching", "originalRequest": { "method": "POST", "url": { "raw": "{{baseUrl}}/v1/supervisor/monitor", "host": ["{{baseUrl}}"], "path": ["v1", "supervisor", "monitor"] } },
-              "status": "Created", "code": 201, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "Coaching",
+              "originalRequest": {
+                "method": "POST",
+                "url": {
+                  "raw": "{{baseUrl}}/v1/supervisor/monitor",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "supervisor",
+                    "monitor"
+                  ]
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{ \"status\": \"coaching\", \"mode\": \"whisper\", \"agentExt\": \"1001\" }"
             },
             {
-              "name": "Not a tenant extension", "originalRequest": { "method": "POST", "url": { "raw": "{{baseUrl}}/v1/supervisor/monitor", "host": ["{{baseUrl}}"], "path": ["v1", "supervisor", "monitor"] } },
-              "status": "Bad Request", "code": 400, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "Not a tenant extension",
+              "originalRequest": {
+                "method": "POST",
+                "url": {
+                  "raw": "{{baseUrl}}/v1/supervisor/monitor",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "supervisor",
+                    "monitor"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{ \"message\": \"supervisorExt and agentExt must be extensions of this tenant\", \"error\": \"Bad Request\", \"statusCode\": 400 }"
             }
           ]
@@ -133,15 +352,49 @@
           "name": "Queue wallboard",
           "request": {
             "method": "GET",
-            "header": [{ "key": "X-API-Key", "value": "{{tenantApiKey}}" }],
-            "url": { "raw": "{{baseUrl}}/v1/queues", "host": ["{{baseUrl}}"], "path": ["v1", "queues"] },
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{tenantApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/queues",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "queues"
+              ]
+            },
             "description": "Live ACD stats for the tenant's PBX. Also streamed as `queue.stats` on the softphone WebSocket. Empty until queues are configured on the PBX."
           },
           "response": [
             {
-              "name": "One queue", "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/v1/queues", "host": ["{{baseUrl}}"], "path": ["v1", "queues"] } },
-              "status": "OK", "code": 200, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "One queue",
+              "originalRequest": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/v1/queues",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "queues"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{\n  \"queues\": [\n    { \"queue\": \"support\", \"waiting\": 2, \"answered\": 10, \"abandoned\": 1, \"membersTotal\": 4, \"membersAvailable\": 3, \"avgHoldSec\": 18, \"avgTalkSec\": 95 }\n  ]\n}"
             }
           ]
@@ -156,30 +409,112 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-API-Key", "value": "{{tenantApiKey}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-Key",
+                "value": "{{tenantApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"agentExt\": \"1001\",\n  \"number\": \"+966501234567\"\n}" },
-            "url": { "raw": "{{baseUrl}}/v1/calls/originate", "host": ["{{baseUrl}}"], "path": ["v1", "calls", "originate"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agentExt\": \"1001\",\n  \"number\": \"+966501234567\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/calls/originate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "calls",
+                "originate"
+              ]
+            },
             "description": "Agent-leg-first: the agent's phone rings, then the PBX dials the number. Rate-limited per tenant (429 over the limit). The callRef reappears on the resulting call.* events."
           },
           "response": [
             {
-              "name": "Originating", "originalRequest": { "method": "POST", "url": { "raw": "{{baseUrl}}/v1/calls/originate", "host": ["{{baseUrl}}"], "path": ["v1", "calls", "originate"] } },
-              "status": "Created", "code": 201, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "Originating",
+              "originalRequest": {
+                "method": "POST",
+                "url": {
+                  "raw": "{{baseUrl}}/v1/calls/originate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "calls",
+                    "originate"
+                  ]
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{\n  \"status\": \"originating\",\n  \"callRef\": \"053d03fc-...\",\n  \"agentExt\": \"1001\",\n  \"number\": \"+966501234567\"\n}"
             },
             {
-              "name": "Invalid API key", "originalRequest": { "method": "POST", "url": { "raw": "{{baseUrl}}/v1/calls/originate", "host": ["{{baseUrl}}"], "path": ["v1", "calls", "originate"] } },
-              "status": "Unauthorized", "code": 401, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "Invalid API key",
+              "originalRequest": {
+                "method": "POST",
+                "url": {
+                  "raw": "{{baseUrl}}/v1/calls/originate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "calls",
+                    "originate"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{ \"message\": \"Invalid API key\", \"error\": \"Unauthorized\", \"statusCode\": 401 }"
             },
             {
-              "name": "Rate limited", "originalRequest": { "method": "POST", "url": { "raw": "{{baseUrl}}/v1/calls/originate", "host": ["{{baseUrl}}"], "path": ["v1", "calls", "originate"] } },
-              "status": "Too Many Requests", "code": 429, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "Rate limited",
+              "originalRequest": {
+                "method": "POST",
+                "url": {
+                  "raw": "{{baseUrl}}/v1/calls/originate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "calls",
+                    "originate"
+                  ]
+                }
+              },
+              "status": "Too Many Requests",
+              "code": 429,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{ \"statusCode\": 429, \"message\": \"ThrottlerException: Too Many Requests\" }"
             }
           ]
@@ -188,15 +523,49 @@
           "name": "Active calls snapshot",
           "request": {
             "method": "GET",
-            "header": [{ "key": "X-API-Key", "value": "{{tenantApiKey}}" }],
-            "url": { "raw": "{{baseUrl}}/v1/calls", "host": ["{{baseUrl}}"], "path": ["v1", "calls"] },
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{tenantApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/calls",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "calls"
+              ]
+            },
             "description": "In-flight calls of the key's tenant, read cluster-wide from Redis."
           },
           "response": [
             {
-              "name": "One live call", "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/v1/calls", "host": ["{{baseUrl}}"], "path": ["v1", "calls"] } },
-              "status": "OK", "code": 200, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "One live call",
+              "originalRequest": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/v1/calls",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "calls"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{\n  \"calls\": [\n    { \"callId\": \"1784827260.0\", \"tenant\": \"tenant-a\", \"direction\": \"outbound\", \"agentExt\": \"1000\", \"state\": \"answered\", \"startedAt\": \"2026-07-25T17:21:00.158Z\", \"channels\": [\"Local/1000@tenant-a-internal-00000000;1\"] }\n  ]\n}"
             }
           ]
@@ -205,15 +574,51 @@
           "name": "Agent presence snapshot",
           "request": {
             "method": "GET",
-            "header": [{ "key": "X-API-Key", "value": "{{tenantApiKey}}" }],
-            "url": { "raw": "{{baseUrl}}/v1/agents/state", "host": ["{{baseUrl}}"], "path": ["v1", "agents", "state"] },
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{tenantApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/agents/state",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "agents",
+                "state"
+              ]
+            },
             "description": "States: NOT_INUSE | RINGING | INUSE (from call lifecycle) | UNAVAILABLE (device unregistered)."
           },
           "response": [
             {
-              "name": "Snapshot", "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/v1/agents/state", "host": ["{{baseUrl}}"], "path": ["v1", "agents", "state"] } },
-              "status": "OK", "code": 200, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "Snapshot",
+              "originalRequest": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/v1/agents/state",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "agents",
+                    "state"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{ \"agents\": [ { \"tenantId\": \"tenant-a\", \"ext\": \"1001\", \"state\": \"NOT_INUSE\", \"at\": \"2026-07-25T17:21:30.775Z\" } ] }"
             }
           ]
@@ -228,27 +633,70 @@
           "event": [
             {
               "listen": "test",
-              "script": { "type": "text/javascript", "exec": [
-                "// Auto-capture the token into the collection variable.",
-                "try { const t = pm.response.json().token; if (t) pm.collectionVariables.set('agentToken', t); } catch (e) {}"
-              ] }
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Auto-capture the token into the collection variable.",
+                  "try { const t = pm.response.json().token; if (t) pm.collectionVariables.set('agentToken', t); } catch (e) {}"
+                ]
+              }
             }
           ],
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-API-Key", "value": "{{tenantApiKey}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-Key",
+                "value": "{{tenantApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"ext\": \"1001\"\n}" },
-            "url": { "raw": "{{baseUrl}}/v1/softphone/login", "host": ["{{baseUrl}}"], "path": ["v1", "softphone", "login"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ext\": \"1001\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/softphone/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "softphone",
+                "login"
+              ]
+            },
             "description": "Returns a short-lived HS256 token. The test script stores it in {{agentToken}}. Also used as ?token= on the /softphone-ws WebSocket."
           },
           "response": [
             {
-              "name": "Token issued", "originalRequest": { "method": "POST", "url": { "raw": "{{baseUrl}}/v1/softphone/login", "host": ["{{baseUrl}}"], "path": ["v1", "softphone", "login"] } },
-              "status": "Created", "code": 201, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "Token issued",
+              "originalRequest": {
+                "method": "POST",
+                "url": {
+                  "raw": "{{baseUrl}}/v1/softphone/login",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "softphone",
+                    "login"
+                  ]
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{\n  \"token\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\",\n  \"ext\": \"1001\",\n  \"displayName\": \"A Agent 1001\",\n  \"expiresInSec\": 28800\n}"
             }
           ]
@@ -257,15 +705,51 @@
           "name": "WebRTC config (JsSIP registration params)",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{agentToken}}" }],
-            "url": { "raw": "{{baseUrl}}/v1/softphone/webrtc-config", "host": ["{{baseUrl}}"], "path": ["v1", "softphone", "webrtc-config"] },
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{agentToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/softphone/webrtc-config",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "softphone",
+                "webrtc-config"
+              ]
+            },
             "description": "SIP registration params for the softphone to register over wss and carry browser audio. 400 if WebRTC env / agent SIP creds are not configured."
           },
           "response": [
             {
-              "name": "Config", "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/v1/softphone/webrtc-config", "host": ["{{baseUrl}}"], "path": ["v1", "softphone", "webrtc-config"] } },
-              "status": "OK", "code": 200, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "Config",
+              "originalRequest": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/v1/softphone/webrtc-config",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "softphone",
+                    "webrtc-config"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{\n  \"wssUrl\": \"wss://127.0.0.1:8089/ws\",\n  \"sipUri\": \"sip:1001@127.0.0.1\",\n  \"authUser\": \"1001\",\n  \"password\": \"webrtc-1001\",\n  \"iceServers\": [ { \"urls\": \"stun:stun.l.google.com:19302\" } ]\n}"
             }
           ]
@@ -275,18 +759,58 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{agentToken}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{agentToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"number\": \"+966501234567\"\n}" },
-            "url": { "raw": "{{baseUrl}}/v1/softphone/originate", "host": ["{{baseUrl}}"], "path": ["v1", "softphone", "originate"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"number\": \"+966501234567\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/softphone/originate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "softphone",
+                "originate"
+              ]
+            },
             "description": "What the softphone page (or Salesforce onClickToDial) calls. Agent identified by the token. Rate-limited per agent session."
           },
           "response": [
             {
-              "name": "Originating", "originalRequest": { "method": "POST", "url": { "raw": "{{baseUrl}}/v1/softphone/originate", "host": ["{{baseUrl}}"], "path": ["v1", "softphone", "originate"] } },
-              "status": "Created", "code": 201, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "Originating",
+              "originalRequest": {
+                "method": "POST",
+                "url": {
+                  "raw": "{{baseUrl}}/v1/softphone/originate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "softphone",
+                    "originate"
+                  ]
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{ \"status\": \"originating\", \"callRef\": \"1a6df105-...\", \"agentExt\": \"1001\", \"number\": \"+966501234567\" }"
             }
           ]
@@ -301,27 +825,91 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-Zoho-Token", "value": "{{zohoCallbackToken}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-Zoho-Token",
+                "value": "{{zohoCallbackToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"zohoUserId\": \"zuid-1001\",\n  \"number\": \"+966501234567\"\n}" },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"zohoUserId\": \"zuid-1001\",\n  \"number\": \"+966501234567\"\n}"
+            },
             "url": {
               "raw": "{{baseUrl}}/v1/integrations/zoho/tenant-a/click-to-call",
-              "host": ["{{baseUrl}}"], "path": ["v1", "integrations", "zoho", "tenant-a", "click-to-call"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "integrations",
+                "zoho",
+                "tenant-a",
+                "click-to-call"
+              ]
             },
             "description": "Registered as the PhoneBridge click-to-call URL. Maps the Zoho user to an agent extension via Agent.crmRefs.zoho, then originates."
           },
           "response": [
             {
-              "name": "Originating", "originalRequest": { "method": "POST", "url": { "raw": "{{baseUrl}}/v1/integrations/zoho/tenant-a/click-to-call", "host": ["{{baseUrl}}"], "path": ["v1", "integrations", "zoho", "tenant-a", "click-to-call"] } },
-              "status": "Created", "code": 201, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "Originating",
+              "originalRequest": {
+                "method": "POST",
+                "url": {
+                  "raw": "{{baseUrl}}/v1/integrations/zoho/tenant-a/click-to-call",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "integrations",
+                    "zoho",
+                    "tenant-a",
+                    "click-to-call"
+                  ]
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{ \"status\": \"originating\", \"callRef\": \"0dcd4c85-...\", \"agentExt\": \"1001\", \"number\": \"+966501234567\" }"
             },
             {
-              "name": "Unmapped Zoho user", "originalRequest": { "method": "POST", "url": { "raw": "{{baseUrl}}/v1/integrations/zoho/tenant-a/click-to-call", "host": ["{{baseUrl}}"], "path": ["v1", "integrations", "zoho", "tenant-a", "click-to-call"] } },
-              "status": "Bad Request", "code": 400, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "Unmapped Zoho user",
+              "originalRequest": {
+                "method": "POST",
+                "url": {
+                  "raw": "{{baseUrl}}/v1/integrations/zoho/tenant-a/click-to-call",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "integrations",
+                    "zoho",
+                    "tenant-a",
+                    "click-to-call"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{ \"message\": \"Zoho user zuid-9999 is not mapped to an agent\", \"error\": \"Bad Request\", \"statusCode\": 400 }"
             }
           ]
@@ -337,9 +925,16 @@
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/v1/recordings/PASTE_TOKEN_FROM_call.ended.recordingUrl",
-              "host": ["{{baseUrl}}"], "path": ["v1", "recordings", "PASTE_TOKEN_FROM_call.ended.recordingUrl"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "recordings",
+                "PASTE_TOKEN_FROM_call.ended.recordingUrl"
+              ]
             },
-            "description": "Use the recordingUrl from a call.ended event verbatim — the token IS the auth (15-min expiry). Returns audio/wav; expired/tampered tokens 404. Direct connections read the local mount; reverse connections pull the file from the on-prem agent over the tunnel."
+            "description": "Use the recordingUrl from a call.ended event verbatim \u2014 the token IS the auth (15-min expiry). Returns audio/wav; expired/tampered tokens 404. Direct connections read the local mount; reverse connections pull the file from the on-prem agent over the tunnel."
           },
           "response": []
         }
@@ -352,15 +947,49 @@
           "name": "Overview",
           "request": {
             "method": "GET",
-            "header": [{ "key": "X-Admin-Key", "value": "{{adminApiKey}}" }],
-            "url": { "raw": "{{baseUrl}}/admin/overview", "host": ["{{baseUrl}}"], "path": ["admin", "overview"] },
+            "header": [
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/overview",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "overview"
+              ]
+            },
             "description": "Connections, tenants, active calls, and health of all five delivery queues (webhook, zoho, salesforce, hubspot, dynamics)."
           },
           "response": [
             {
-              "name": "Overview", "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/admin/overview", "host": ["{{baseUrl}}"], "path": ["admin", "overview"] } },
-              "status": "OK", "code": 200, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "Overview",
+              "originalRequest": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/admin/overview",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "overview"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{\n  \"connections\": [ { \"name\": \"lab-asterisk\", \"mode\": \"direct\", \"connected\": true } ],\n  \"tenants\": [\n    { \"slug\": \"tenant-a\", \"agents\": 2, \"integrations\": [\"zoho\", \"hubspot\"] },\n    { \"slug\": \"tenant-b\", \"agents\": 2, \"integrations\": [\"salesforce\", \"dynamics\"] }\n  ],\n  \"activeCalls\": [],\n  \"queues\": {\n    \"webhook\": { \"completed\": 1, \"failed\": 0 },\n    \"zoho\": { \"completed\": 3, \"failed\": 0 },\n    \"salesforce\": { \"completed\": 1, \"failed\": 0 },\n    \"hubspot\": { \"completed\": 1, \"failed\": 0 },\n    \"dynamics\": { \"completed\": 1, \"failed\": 0 }\n  }\n}"
             }
           ]
@@ -369,15 +998,49 @@
           "name": "Dead letters (failed deliveries)",
           "request": {
             "method": "GET",
-            "header": [{ "key": "X-Admin-Key", "value": "{{adminApiKey}}" }],
-            "url": { "raw": "{{baseUrl}}/admin/dead-letters", "host": ["{{baseUrl}}"], "path": ["admin", "dead-letters"] },
+            "header": [
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/dead-letters",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "dead-letters"
+              ]
+            },
             "description": "Failed jobs across all delivery queues, retained for inspection."
           },
           "response": [
             {
-              "name": "Two dead letters", "originalRequest": { "method": "GET", "url": { "raw": "{{baseUrl}}/admin/dead-letters", "host": ["{{baseUrl}}"], "path": ["admin", "dead-letters"] } },
-              "status": "OK", "code": 200, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "Two dead letters",
+              "originalRequest": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/admin/dead-letters",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "dead-letters"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{\n  \"deadLetters\": [\n    { \"queue\": \"webhook\", \"jobId\": \"3\", \"type\": \"call.ended\", \"attemptsMade\": 4, \"failedReason\": \"fetch failed\", \"tenantId\": \"tenant-a\", \"failedAt\": \"2026-07-25T11:23:54.246Z\" }\n  ]\n}"
             }
           ]
@@ -386,18 +1049,55 @@
           "name": "Retry a dead-lettered job",
           "request": {
             "method": "POST",
-            "header": [{ "key": "X-Admin-Key", "value": "{{adminApiKey}}" }],
+            "header": [
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminApiKey}}"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/admin/dead-letters/webhook/3/retry",
-              "host": ["{{baseUrl}}"], "path": ["admin", "dead-letters", "webhook", "3", "retry"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "dead-letters",
+                "webhook",
+                "3",
+                "retry"
+              ]
             },
             "description": "Re-enqueue one failed job. Path: /admin/dead-letters/:queue/:jobId/retry (queue = webhook|zoho|salesforce|hubspot|dynamics)."
           },
           "response": [
             {
-              "name": "Retrying", "originalRequest": { "method": "POST", "url": { "raw": "{{baseUrl}}/admin/dead-letters/webhook/3/retry", "host": ["{{baseUrl}}"], "path": ["admin", "dead-letters", "webhook", "3", "retry"] } },
-              "status": "Created", "code": 201, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "Retrying",
+              "originalRequest": {
+                "method": "POST",
+                "url": {
+                  "raw": "{{baseUrl}}/admin/dead-letters/webhook/3/retry",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "dead-letters",
+                    "webhook",
+                    "3",
+                    "retry"
+                  ]
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{ \"status\": \"retrying\", \"queue\": \"webhook\", \"jobId\": \"3\" }"
             }
           ]
@@ -406,15 +1106,49 @@
           "name": "Hot-reload registry",
           "request": {
             "method": "POST",
-            "header": [{ "key": "X-Admin-Key", "value": "{{adminApiKey}}" }],
-            "url": { "raw": "{{baseUrl}}/admin/reload", "host": ["{{baseUrl}}"], "path": ["admin", "reload"] },
-            "description": "Re-reads the DB registry; only changed PBX connections restart (live tunnels survive)."
+            "header": [
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/reload",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "reload"
+              ]
+            },
+            "description": "Re-reads the DB registry; only changed PBX connections restart (live tunnels survive). Since Phase 12a this is BROADCAST over the cluster bus, so one call reaches every replica \u2014 previously the other replicas kept serving stale API keys and answered 401 for a newly created tenant. Responds {\"status\":\"reload-broadcast\"}."
           },
           "response": [
             {
-              "name": "Reloaded", "originalRequest": { "method": "POST", "url": { "raw": "{{baseUrl}}/admin/reload", "host": ["{{baseUrl}}"], "path": ["admin", "reload"] } },
-              "status": "Created", "code": 201, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "Reloaded",
+              "originalRequest": {
+                "method": "POST",
+                "url": {
+                  "raw": "{{baseUrl}}/admin/reload",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "reload"
+                  ]
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{ \"status\": \"reloaded\" }"
             }
           ]
@@ -424,18 +1158,56 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-Admin-Key", "value": "{{adminApiKey}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"name\": \"customer-freepbx\",\n  \"mode\": \"reverse\",\n  \"host\": \"127.0.0.1\",\n  \"port\": 5038,\n  \"username\": \"cti\",\n  \"secret\": \"ami-manager-secret\"\n}" },
-            "url": { "raw": "{{baseUrl}}/admin/pbx-connections", "host": ["{{baseUrl}}"], "path": ["admin", "pbx-connections"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"customer-freepbx\",\n  \"mode\": \"reverse\",\n  \"host\": \"127.0.0.1\",\n  \"port\": 5038,\n  \"username\": \"cti\",\n  \"secret\": \"ami-manager-secret\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/pbx-connections",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "pbx-connections"
+              ]
+            },
             "description": "mode reverse -> the connectorToken in the response is shown exactly once (give it to the on-prem agent). Run /admin/reload to apply."
           },
           "response": [
             {
-              "name": "Created (reverse)", "originalRequest": { "method": "POST", "url": { "raw": "{{baseUrl}}/admin/pbx-connections", "host": ["{{baseUrl}}"], "path": ["admin", "pbx-connections"] } },
-              "status": "Created", "code": 201, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "Created (reverse)",
+              "originalRequest": {
+                "method": "POST",
+                "url": {
+                  "raw": "{{baseUrl}}/admin/pbx-connections",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "pbx-connections"
+                  ]
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{ \"id\": \"9c1a7a44-...\", \"name\": \"customer-freepbx\", \"mode\": \"reverse\", \"connectorToken\": \"conn-e4b2af9a...\" }"
             }
           ]
@@ -445,18 +1217,56 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-Admin-Key", "value": "{{adminApiKey}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"slug\": \"acme\",\n  \"name\": \"Acme Corp\",\n  \"pbxConnectionId\": \"9c1a7a44-...\",\n  \"extensionPattern\": \"^1\\\\d{3}$\",\n  \"contexts\": [\"from-internal\"],\n  \"originateContext\": \"from-internal\",\n  \"originateChannelTemplate\": \"PJSIP/{ext}\",\n  \"webhookUrl\": \"https://crm.acme.com/cti-events\",\n  \"webhookSecret\": \"acme-webhook-secret\"\n}" },
-            "url": { "raw": "{{baseUrl}}/admin/tenants", "host": ["{{baseUrl}}"], "path": ["admin", "tenants"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"slug\": \"acme\",\n  \"name\": \"Acme Corp\",\n  \"pbxConnectionId\": \"9c1a7a44-...\",\n  \"extensionPattern\": \"^1\\\\d{3}$\",\n  \"contexts\": [\"from-internal\"],\n  \"originateContext\": \"from-internal\",\n  \"originateChannelTemplate\": \"PJSIP/{ext}\",\n  \"webhookUrl\": \"https://crm.acme.com/cti-events\",\n  \"webhookSecret\": \"acme-webhook-secret\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/tenants",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "tenants"
+              ]
+            },
             "description": "The apiKey in the response is shown exactly once (stored as sha256)."
           },
           "response": [
             {
-              "name": "Created", "originalRequest": { "method": "POST", "url": { "raw": "{{baseUrl}}/admin/tenants", "host": ["{{baseUrl}}"], "path": ["admin", "tenants"] } },
-              "status": "Created", "code": 201, "_postman_previewlanguage": "json",
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "name": "Created",
+              "originalRequest": {
+                "method": "POST",
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ]
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
               "body": "{ \"id\": \"5b8e5f2a-...\", \"slug\": \"acme\", \"apiKey\": \"acme-8870cec8...\" }"
             }
           ]
@@ -466,70 +1276,218 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-Admin-Key", "value": "{{adminApiKey}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"tenantSlug\": \"acme\",\n  \"ext\": \"1001\",\n  \"displayName\": \"Sara Al-Harbi\",\n  \"crmRefs\": {\n    \"zoho\": \"zuid-1001\",\n    \"salesforce\": \"005XXXXXXXXXXXX\",\n    \"hubspot\": \"hs-owner-42\",\n    \"dynamics\": \"11111111-1111-1111-1111-111111111111\"\n  }\n}" },
-            "url": { "raw": "{{baseUrl}}/admin/agents", "host": ["{{baseUrl}}"], "path": ["admin", "agents"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenantSlug\": \"acme\",\n  \"ext\": \"1001\",\n  \"displayName\": \"Sara Al-Harbi\",\n  \"crmRefs\": {\n    \"zoho\": \"zuid-1001\",\n    \"salesforce\": \"005XXXXXXXXXXXX\",\n    \"hubspot\": \"hs-owner-42\",\n    \"dynamics\": \"11111111-1111-1111-1111-111111111111\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/agents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "agents"
+              ]
+            },
             "description": "crmRefs maps this agent to each CRM's user/owner id for pops + ownership."
           },
           "response": []
         },
         {
-          "name": "Create CRM integration — Zoho",
+          "name": "Create CRM integration \u2014 Zoho",
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-Admin-Key", "value": "{{adminApiKey}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"tenantSlug\": \"acme\",\n  \"type\": \"zoho\",\n  \"config\": {\n    \"dc\": \"sa\",\n    \"accountsBaseUrl\": \"https://accounts.zoho.sa\",\n    \"apiBaseUrl\": \"https://phonebridge.zoho.sa/phonebridge/v3\",\n    \"clientId\": \"1000.XXXX\"\n  },\n  \"secrets\": { \"clientSecret\": \"...\", \"refreshToken\": \"...\", \"callbackToken\": \"...\" }\n}" },
-            "url": { "raw": "{{baseUrl}}/admin/integrations", "host": ["{{baseUrl}}"], "path": ["admin", "integrations"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenantSlug\": \"acme\",\n  \"type\": \"zoho\",\n  \"config\": {\n    \"dc\": \"sa\",\n    \"accountsBaseUrl\": \"https://accounts.zoho.sa\",\n    \"apiBaseUrl\": \"https://phonebridge.zoho.sa/phonebridge/v3\",\n    \"clientId\": \"1000.XXXX\"\n  },\n  \"secrets\": { \"clientSecret\": \"...\", \"refreshToken\": \"...\", \"callbackToken\": \"...\" }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/integrations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "integrations"
+              ]
+            },
             "description": "config is non-secret; secrets are AES-256-GCM encrypted. Run /admin/reload afterwards."
           },
           "response": []
         },
         {
-          "name": "Create CRM integration — Salesforce",
+          "name": "Create CRM integration \u2014 Salesforce",
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-Admin-Key", "value": "{{adminApiKey}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"tenantSlug\": \"acme\",\n  \"type\": \"salesforce\",\n  \"config\": {\n    \"loginBaseUrl\": \"https://login.salesforce.com\",\n    \"instanceUrl\": \"https://acme.my.salesforce.com\",\n    \"apiVersion\": \"61.0\",\n    \"clientId\": \"3MVG9...\"\n  },\n  \"secrets\": { \"clientSecret\": \"...\", \"refreshToken\": \"...\" }\n}" },
-            "url": { "raw": "{{baseUrl}}/admin/integrations", "host": ["{{baseUrl}}"], "path": ["admin", "integrations"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenantSlug\": \"acme\",\n  \"type\": \"salesforce\",\n  \"config\": {\n    \"loginBaseUrl\": \"https://login.salesforce.com\",\n    \"instanceUrl\": \"https://acme.my.salesforce.com\",\n    \"apiVersion\": \"61.0\",\n    \"clientId\": \"3MVG9...\"\n  },\n  \"secrets\": { \"clientSecret\": \"...\", \"refreshToken\": \"...\" }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/integrations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "integrations"
+              ]
+            },
             "description": "Logs a completed Call Task. Pop/click-to-call is the client-side Open CTI softphone."
           },
           "response": []
         },
         {
-          "name": "Create CRM integration — HubSpot",
+          "name": "Create CRM integration \u2014 HubSpot",
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-Admin-Key", "value": "{{adminApiKey}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"tenantSlug\": \"acme\",\n  \"type\": \"hubspot\",\n  \"config\": {\n    \"accountsBaseUrl\": \"https://api.hubapi.com\",\n    \"apiBaseUrl\": \"https://api.hubapi.com\",\n    \"clientId\": \"xxxxxxxx-xxxx-...\"\n  },\n  \"secrets\": { \"clientSecret\": \"...\", \"refreshToken\": \"...\" }\n}" },
-            "url": { "raw": "{{baseUrl}}/admin/integrations", "host": ["{{baseUrl}}"], "path": ["admin", "integrations"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenantSlug\": \"acme\",\n  \"type\": \"hubspot\",\n  \"config\": {\n    \"accountsBaseUrl\": \"https://api.hubapi.com\",\n    \"apiBaseUrl\": \"https://api.hubapi.com\",\n    \"clientId\": \"xxxxxxxx-xxxx-...\"\n  },\n  \"secrets\": { \"clientSecret\": \"...\", \"refreshToken\": \"...\" }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/integrations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "integrations"
+              ]
+            },
             "description": "Logs a HubSpot Call engagement on call.ended. Pop/click-to-call is the client-side Calling Extensions SDK."
           },
           "response": []
         },
         {
-          "name": "Create CRM integration — Dynamics 365",
+          "name": "Create CRM integration \u2014 Dynamics 365",
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-Admin-Key", "value": "{{adminApiKey}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"tenantSlug\": \"acme\",\n  \"type\": \"dynamics\",\n  \"config\": {\n    \"loginBaseUrl\": \"https://login.microsoftonline.com\",\n    \"aadTenantId\": \"<azure-ad-tenant-guid>\",\n    \"orgUrl\": \"https://acme.crm.dynamics.com\",\n    \"apiVersion\": \"9.2\",\n    \"clientId\": \"<app-registration-guid>\"\n  },\n  \"secrets\": { \"clientSecret\": \"...\" }\n}" },
-            "url": { "raw": "{{baseUrl}}/admin/integrations", "host": ["{{baseUrl}}"], "path": ["admin", "integrations"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenantSlug\": \"acme\",\n  \"type\": \"dynamics\",\n  \"config\": {\n    \"loginBaseUrl\": \"https://login.microsoftonline.com\",\n    \"aadTenantId\": \"<azure-ad-tenant-guid>\",\n    \"orgUrl\": \"https://acme.crm.dynamics.com\",\n    \"apiVersion\": \"9.2\",\n    \"clientId\": \"<app-registration-guid>\"\n  },\n  \"secrets\": { \"clientSecret\": \"...\" }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/integrations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "integrations"
+              ]
+            },
             "description": "Logs a Dataverse phonecall activity on call.ended. Pop/click-to-call is the client-side Channel Integration Framework."
           },
           "response": []
+        },
+        {
+          "name": "Cluster ownership map",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/cluster",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "cluster"
+              ]
+            },
+            "description": "Which replica holds the lease for each PBX connection, and how long it has left. A PBX is driven by exactly one replica (ADR-0012), so `owned: []` on a replica is normal \u2014 it simply does not own that connection. This is the first thing to check when a connection looks down. Note the response differs per replica: `thisPod` and `owned` are local, `leases` is cluster-wide."
+          },
+          "response": [
+            {
+              "name": "A replica that owns nothing",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "X-Admin-Key",
+                    "value": "{{adminApiKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/cluster",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "cluster"
+                  ]
+                },
+                "description": "Which replica holds the lease for each PBX connection, and how long it has left. A PBX is driven by exactly one replica (ADR-0012), so `owned: []` on a replica is normal \u2014 it simply does not own that connection. This is the first thing to check when a connection looks down. Note the response differs per replica: `thisPod` and `owned` are local, `leases` is cluster-wide."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"thisPod\": \"cti-7d9f-abc123\",\n  \"owned\": [],\n  \"leases\": [\n    {\n      \"kind\": \"ami\",\n      \"connectionId\": \"a858d7f9-8bff-4576-aefb-4a1f0e559918\",\n      \"podId\": \"cti-5b2c-def456\",\n      \"ttlMs\": 25156\n    }\n  ]\n}"
+            }
+          ]
         }
       ]
     }

@@ -168,8 +168,52 @@ For a live wallboard, subscribe to the softphone WebSocket (§3) — `queue.stat
 | Metrics | `GET /metrics` → point Prometheus at it (call volume, originate latency, connection up/down, queue depth) |
 | Failed CRM deliveries | `GET /admin/dead-letters`; retry one with `POST /admin/dead-letters/:queue/:jobId/retry` or the **Retry** button in `/admin` |
 | Alerts | structured `alert` WARN logs on connection-down / dead-letters (or Alertmanager on the `cti_queue_jobs{state="failed"}` / `cti_pbx_connection_up` series) |
-| Change tenants/agents/integrations | admin `POST` endpoints + `POST /admin/reload` |
+| Change tenants/agents/integrations | admin `POST` endpoints + `POST /admin/reload` (broadcasts to **every** replica) |
+| Who owns which PBX | `GET /admin/cluster` — see §13 |
 | API reference | Swagger UI at `/docs` |
+
+## 13. Operate a multi-replica deployment (Phase 12a)
+
+Background and design in [SCALING.md](./SCALING.md). Day-to-day, three things are worth knowing.
+
+**Find out who owns what.** A PBX connection is driven by exactly one replica; the rest hold no socket for it. This is the first command to run whenever a connection "looks down":
+
+```bash
+curl -s -H "X-Admin-Key: $ADMIN" {{baseUrl}}/admin/cluster
+```
+
+```json
+{ "thisPod": "cti-7d9f-abc123",
+  "owned": [],
+  "leases": [{ "kind": "ami", "connectionId": "a858…", "podId": "cti-5b2c-def456", "ttlMs": 25156 }] }
+```
+
+`owned: []` means *this* replica drives nothing — normal and healthy. `leases` is the cluster-wide picture and reads the same from any replica.
+
+**Reload the registry everywhere.** `POST /admin/reload` broadcasts, so one call is enough no matter which replica answers it:
+
+```bash
+curl -X POST -H "X-Admin-Key: $ADMIN" {{baseUrl}}/admin/reload   # → {"status":"reload-broadcast"}
+```
+
+**Take a replica out.** Send `SIGTERM`. The lease is released immediately and a peer picks the connection up within about 5 seconds; calls in flight are not lost, because state is in Redis and the new owner resyncs against `CoreShowChannels`. A hard kill skips the release, so the connection is orphaned until the lease TTL expires (≤30s).
+
+### When an agent reports no screen pop
+
+```mermaid
+flowchart TD
+    S["No screen pop"] --> Q1{"GET /admin/cluster —<br/>does any replica hold the lease?"}
+    Q1 -- no --> F1["No owner. Check Redis reachability and<br/>that the connection row exists.<br/>A sweep runs every 5s."]
+    Q1 -- yes --> Q2{"On the owner:<br/>AMI socket up?"}
+    Q2 -- no --> F2["PBX unreachable or AMI auth failing —<br/>check credentials and ACL."]
+    Q2 -- yes --> Q3{"Does the owner log the call?"}
+    Q3 -- no --> F3["Correlation / tenant routing:<br/>does the dialplan context match the<br/>tenant's contexts or extension pattern?"]
+    Q3 -- yes --> Q4{"Is the agent's WebSocket<br/>connected to some replica?"}
+    Q4 -- no --> F4["Client side: token expiry, ingress<br/>WebSocket upgrade, or proxy read timeout."]
+    Q4 -- yes --> F5["Cluster bus: confirm every replica<br/>reaches the SAME Redis.<br/>A split Redis splits the cluster."]
+```
+
+**Duplicate CRM records** should be impossible. If they appear: check whether two replicas list the same connection under `owned` (that means two Redis instances, not one cluster), then check that every replica is on the same build — a pre-Phase-12 replica ignores leases entirely.
 
 ## Troubleshooting
 

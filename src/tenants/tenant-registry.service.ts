@@ -1,6 +1,8 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { CLUSTER_EVENTS } from '../cluster/cluster-bus.service';
 import { PbxConnection } from './entities/pbx-connection.entity';
 import { Tenant } from './entities/tenant.entity';
 import { CrmIntegration, CrmType } from './entities/crm-integration.entity';
@@ -10,6 +12,12 @@ export interface ResolvedTenant {
   entity: Tenant;
   extensionRegex: RegExp;
 }
+
+/**
+ * Local-only signal that this pod's registry copy is fresh. Deliberately not
+ * mirrored across the cluster — each pod raises its own after reloading.
+ */
+export const REGISTRY_RELOADED = 'registry.reloaded';
 
 /**
  * In-memory view of the tenant registry, loaded at boot. Phase 2 keeps this
@@ -29,7 +37,23 @@ export class TenantRegistryService implements OnModuleInit {
     @InjectRepository(Tenant) private readonly tenantRepo: Repository<Tenant>,
     @InjectRepository(CrmIntegration) private readonly integrationRepo: Repository<CrmIntegration>,
     private readonly crypto: CryptoService,
+    private readonly bus: EventEmitter2,
   ) {}
+
+  /**
+   * A registry change made through /admin lands on one pod, but every pod
+   * authenticates API keys and resolves tenants from its own in-memory copy.
+   * Without this fan-out the other replicas answer 401 for a brand-new
+   * tenant, and their delivery workers drop its jobs silently.
+   *
+   * Reload here first, then announce it locally so the PBX supervisors act on
+   * fresh data rather than racing this listener.
+   */
+  @OnEvent(CLUSTER_EVENTS.registryReload)
+  async onClusterReload(): Promise<void> {
+    await this.onModuleInit();
+    this.bus.emit(REGISTRY_RELOADED);
+  }
 
   async onModuleInit(): Promise<void> {
     this.connections = await this.connectionRepo.find();

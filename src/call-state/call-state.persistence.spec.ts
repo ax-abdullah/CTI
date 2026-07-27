@@ -23,7 +23,13 @@ function registryWith(tenant: ResolvedTenant): TenantRegistryService {
 function sharedRedis() {
   const store = new Map<string, string>();
   return {
-    set: async (k: string, v: string) => void store.set(k, v),
+    // Honours SET ... NX so the exactly-once finalize claim behaves as it
+    // does in production (the first claimant wins, later ones get null).
+    set: async (k: string, v: string, ...args: unknown[]) => {
+      if (args.includes('NX') && store.has(k)) return null;
+      store.set(k, v);
+      return 'OK';
+    },
     del: async (k: string) => void store.delete(k),
     scan: async (_cur: string, _m: string, pattern: string) => {
       const rx = new RegExp('^' + pattern.replace('*', '.*') + '$');
@@ -36,7 +42,44 @@ function sharedRedis() {
 const noRecordings = { signedUrlFor: () => undefined } as unknown as RecordingsService;
 
 describe('CallStateService persistence + restart recovery', () => {
-  it('recovers an in-flight call from Redis and finalizes it on hangup after "restart"', () => {
+  /**
+   * A lease handover can briefly leave two pods holding the same call: the
+   * outgoing owner mid-hangup, and the incoming one having hydrated it from
+   * Redis. Both would otherwise emit call.ended, and every enabled CRM would
+   * log the call twice.
+   */
+  it('emits call.ended once when two pods finalize the same call', async () => {
+    jest.useFakeTimers();
+    const redis = sharedRedis() as any;
+    const tenant = tenantA();
+
+    const ended: unknown[] = [];
+    const services = ['pod-a', 'pod-b'].map(() => {
+      const bus = new EventEmitter2({ wildcard: true, delimiter: '.' });
+      bus.on(CALL_EVENTS.ended, (e) => ended.push(e));
+      return new CallStateService(registryWith(tenant), noRecordings, bus, redis);
+    });
+
+    // The same real call, observed independently by both pods.
+    const newchannel: AmiMessage = {
+      Event: 'Newchannel',
+      Uniqueid: 'dup1',
+      Linkedid: 'dup1',
+      Channel: 'PJSIP/1001-000000dd',
+      Context: 'tenant-a-internal',
+    };
+    for (const svc of services) {
+      svc.handleAmiEvent({ connectionId: CONN, msg: newchannel });
+      svc.handleAmiEvent({ connectionId: CONN, msg: { Event: 'Newstate', Linkedid: 'dup1', Uniqueid: 'dup1', ChannelStateDesc: 'Up' } });
+      svc.handleAmiEvent({ connectionId: CONN, msg: { Event: 'Hangup', Linkedid: 'dup1', Uniqueid: 'dup1' } });
+    }
+    await jest.advanceTimersByTimeAsync(2000);
+
+    expect(ended).toHaveLength(1);
+    jest.useRealTimers();
+  });
+
+  it('recovers an in-flight call from Redis and finalizes it on hangup after "restart"', async () => {
     jest.useFakeTimers();
     const redis = sharedRedis() as any;
 
@@ -52,7 +95,7 @@ describe('CallStateService persistence + restart recovery', () => {
     bus2.on(CALL_EVENTS.ended, (e) => ended.push(e));
     const svc2 = new CallStateService(registryWith(tenantA()), noRecordings, bus2, redis);
 
-    return svc2.loadPersisted(CONN).then((records) => {
+    return svc2.loadPersisted(CONN).then(async (records) => {
       expect(records).toHaveLength(1);
       expect(records[0].callId).toBe('c1');
       expect(records[0].tenant?.entity.slug).toBe('tenant-a'); // tenant re-resolved
@@ -60,7 +103,7 @@ describe('CallStateService persistence + restart recovery', () => {
 
       // The hangup that arrives after restart still produces call.ended.
       svc2.handleAmiEvent({ connectionId: CONN, msg: { Event: 'Hangup', Linkedid: 'c1', Uniqueid: 'c1' } });
-      jest.advanceTimersByTime(2000);
+      await jest.advanceTimersByTimeAsync(2000);
       expect(ended).toHaveLength(1);
       expect(ended[0]).toMatchObject({ callId: 'c1', tenantId: 'tenant-a', disposition: 'ANSWERED' });
       jest.useRealTimers();

@@ -19,6 +19,13 @@ export interface CallRingingEvent {
 export interface CallAnsweredEvent {
   callId: string;
   tenantId: string;
+  /**
+   * Carried so consumers need no per-call routing state of their own. Any
+   * replica can act on this event, including one that never saw the matching
+   * `call.ringing` — which is the normal case once a connection has a single
+   * owner and events reach other pods over the cluster bus.
+   */
+  agentExt?: string;
   answeredAt: string;
 }
 

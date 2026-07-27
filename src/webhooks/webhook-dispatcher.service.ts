@@ -4,6 +4,7 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { Queue } from 'bullmq';
 import { randomUUID } from 'node:crypto';
 import { CALL_EVENTS } from '../call-state/normalized-events';
+import { isFromCluster } from '../cluster/cluster-bus.service';
 import { WEBHOOK_QUEUE, WebhookEnvelope, WebhookJob } from './webhook.types';
 
 /**
@@ -32,6 +33,10 @@ export class WebhookDispatcherService {
   }
 
   private enqueue(type: WebhookEnvelope['type'], payload: { tenantId: string }): Promise<unknown> {
+    // Mirrored onto every replica for socket fan-out; only the pod that
+    // derived it from the PBX enqueues delivery (ADR-0012).
+    if (isFromCluster(payload)) return Promise.resolve(undefined);
+
     const job: WebhookJob = {
       envelope: {
         id: randomUUID(),

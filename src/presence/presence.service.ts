@@ -1,6 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { AmiMessage } from '../pbx-connector/ami-client';
+import type { Redis } from 'ioredis';
+import { REDIS_CLIENT } from '../redis/redis.module';
 import {
   CALL_EVENTS,
   CallAnsweredEvent,
@@ -33,36 +35,50 @@ export const AGENT_STATE_EVENT = 'agent.state';
 @Injectable()
 export class PresenceService {
   private readonly logger = new Logger(PresenceService.name);
+  /** Local mirror, used only to suppress no-op transitions cheaply. */
   private readonly states = new Map<string, AgentStateEvent>(); // `${tenant}:${ext}`
-  private readonly callAgents = new Map<string, { tenantId: string; ext: string }>();
+  private readonly ttlSec = 24 * 3600;
 
   constructor(
     private readonly registry: TenantRegistryService,
     private readonly bus: EventEmitter2,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
-  snapshot(tenantSlug: string): AgentStateEvent[] {
-    return [...this.states.values()].filter((s) => s.tenantId === tenantSlug);
+  private key(tenantSlug: string): string {
+    return `cti:presence:${tenantSlug}`;
+  }
+
+  /**
+   * Read from Redis, not local memory: presence is derived on whichever pod
+   * owns the PBX, but GET /v1/agents/state is answered by whichever pod the
+   * request reached. Reading locally would make the answer depend on which
+   * replica you happened to hit.
+   */
+  async snapshot(tenantSlug: string): Promise<AgentStateEvent[]> {
+    try {
+      const raw = await this.redis.hgetall(this.key(tenantSlug));
+      return Object.values(raw).map((v) => JSON.parse(v) as AgentStateEvent);
+    } catch (e) {
+      this.logger.warn(`presence read failed for ${tenantSlug}: ${(e as Error).message}`);
+      return [...this.states.values()].filter((s) => s.tenantId === tenantSlug);
+    }
   }
 
   @OnEvent(CALL_EVENTS.ringing)
   onRinging(event: CallRingingEvent): void {
     if (!event.agentExt) return;
-    this.callAgents.set(event.callId, { tenantId: event.tenantId, ext: event.agentExt });
     this.set(event.tenantId, event.agentExt, 'RINGING');
   }
 
   @OnEvent(CALL_EVENTS.answered)
   onAnswered(event: CallAnsweredEvent): void {
-    const route = this.callAgents.get(event.callId);
-    if (route) this.set(route.tenantId, route.ext, 'INUSE');
+    if (event.agentExt) this.set(event.tenantId, event.agentExt, 'INUSE');
   }
 
   @OnEvent(CALL_EVENTS.ended)
   onEnded(event: CallEndedEvent): void {
-    const route = this.callAgents.get(event.callId);
-    this.callAgents.delete(event.callId);
-    if (route) this.set(route.tenantId, route.ext, 'NOT_INUSE');
+    if (event.agentExt) this.set(event.tenantId, event.agentExt, 'NOT_INUSE');
   }
 
   @OnEvent('ami.event')
@@ -86,6 +102,15 @@ export class PresenceService {
     if (this.states.get(key)?.state === state) return;
     const event: AgentStateEvent = { tenantId, ext, state, at: new Date().toISOString() };
     this.states.set(key, event);
+
+    // Write-through so every replica can answer for this agent. Expiry is
+    // refreshed on each change; an agent nobody has seen for a day falls out
+    // rather than lingering as a stale "available" forever.
+    this.redis
+      .hset(this.key(tenantId), ext, JSON.stringify(event))
+      .then(() => this.redis.expire(this.key(tenantId), this.ttlSec))
+      .catch((e) => this.logger.warn(`presence write failed for ${key}: ${(e as Error).message}`));
+
     this.bus.emit(AGENT_STATE_EVENT, event);
     this.logger.debug(`[${tenantId}] ext ${ext} -> ${state}`);
   }

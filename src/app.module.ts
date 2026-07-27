@@ -6,6 +6,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { RedisModule, REDIS_CLIENT } from './redis/redis.module';
+import { ClusterModule } from './cluster/cluster.module';
 import { TenantsModule } from './tenants/tenants.module';
 import { PbxConnectorModule } from './pbx-connector/pbx-connector.module';
 import { CallStateModule } from './call-state/call-state.module';
@@ -62,6 +63,7 @@ import { ApiModule } from './api/api.module';
       }),
     }),
     RedisModule,
+    ClusterModule,
     TenantsModule,
     PbxConnectorModule,
     CallStateModule,
